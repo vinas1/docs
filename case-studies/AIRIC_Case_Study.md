@@ -5,66 +5,49 @@
 
 ## Executive Summary
 
-AIRIC adds an automated AI review to the pull request workflow.
-
-It analyzes proposed changes, identifies potential bugs and security risks, assigns a risk level, and posts actionable feedback directly to the pull request. A human still makes the final decision.
+AIRIC adds automated AI review to the GitHub pull request workflow. It analyzes proposed changes, identifies potential bugs and security risks, assigns a risk level, and posts actionable feedback directly to the pull request. A human still makes the final decision.
 
 ### Why it matters
 
 - 🔍 **Earlier feedback:** Issues surface before human review begins.
 - 🛡️ **Local-first inference:** Source code is processed inside the enterprise boundary.
-- 💰 **Predictable per-developer cost:** PR reviews do not consume paid cloud-model tokens.
-- ⚙️ **Reusable platform capability:** Teams adopt one shared review pattern instead of building their own.
+- 💰 **Predictable cost:** AIRIC pull request reviews do not consume managed AI platform or hosted-inference charges.
+- ⚙️ **Reusable capability:** Teams use one shared review pattern instead of building their own.
 - 👤 **Human accountability:** AIRIC advises. Engineers approve.
 
-AIRIC uses the **Gemma 4 12B QAT** large language model. The architecture uses stateless request/response processing, does not require retention of pull request content, and keeps model inference inside the enterprise boundary.
+AIRIC uses the **Gemma 4 12B QAT** large language model. Its stateless request/response architecture does not require retention of pull request content and keeps model inference inside the enterprise boundary.
 
 ---
 
 ## The Problem
 
-AI-generated code is increasing the volume of code teams must review. That creates several related problems:
+AI-first engineering changes the cost and volume of software delivery. Developers may run autonomous multi-agent workflows, process large codebases through long-context windows, and use LLM-powered CI/CD pipelines for testing, review, and refactoring.
+
+This creates several problems:
 
 1. More pull requests compete for limited reviewer attention.
-2. Review quality varies based on reviewer availability and experience.
+2. Review quality varies with reviewer availability and experience.
 3. Security and quality issues may remain unnoticed until late in delivery.
-4. Cloud AI reviews consume credits from a shared enterprise pool.
-5. High per-developer consumption can create costs that affect the entire organization.
-
-A recent review of AI tool usage showed that consumption exceeded the allocated monthly budget, resulting in significant overage charges. A large percentage of the monthly pool was consumed very early in the billing cycle after the new consumption model was introduced.
-
-A per-developer monthly limit was introduced to control consumption. Higher limits have also been evaluated for high-usage scenarios.
+4. Cloud AI reviews consume variable API and agentic-workflow budgets.
+5. Unbounded agents can create significant per-developer cost exposure.
 
 AIRIC addresses a specific part of this problem:
 
-> **Pull request review should not need to compete for paid cloud AI credits.**
+> **Pull request review should not need to compete for managed AI platform capacity.**
 
 ---
 
 ## The Solution
 
-AIRIC runs as part of the GitHub pull request workflow.
-
 ```mermaid
-%%{init: {
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#dbeafe",
-    "primaryTextColor": "#172554",
-    "primaryBorderColor": "#2563eb",
-    "lineColor": "#64748b",
-    "secondaryColor": "#dcfce7",
-    "tertiaryColor": "#fef3c7",
-    "fontFamily": "Segoe UI"
-  }
-}}%%
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#dbeafe","primaryTextColor":"#172554","primaryBorderColor":"#2563eb","lineColor":"#64748b","secondaryColor":"#dcfce7","tertiaryColor":"#fef3c7","fontFamily":"Segoe UI"}}}%%
 flowchart LR
     A["👩‍💻 Developer<br/>opens or updates PR"] --> B["⚙️ GitHub workflow<br/>collects diff and context"]
     B --> C["🤖 AIRIC<br/>reviews the changes"]
     C --> D["📋 Structured findings<br/>posted to the PR"]
     D --> E{"Risk level"}
-    E -->|"Low"| F["✅ Rapid human review"]
-    E -->|"Medium or High"| G["🛠️ Developer addresses findings"]
+    E -->|Low| F["✅ Rapid human review"]
+    E -->|Medium or High| G["🛠️ Developer addresses findings"]
     G --> B
     F --> H["👤 Human approval"]
     H --> I["🚀 Merge"]
@@ -82,69 +65,33 @@ flowchart LR
     class G action
 ```
 
-The reviewer retrieves the pull request diff and changed-file context, manages the available context window, sends the prompt to the local LLM, formats the response, and posts the result to GitHub as a pull request comment.
-
----
+The reviewer retrieves the pull request diff and changed-file context, manages the available context window, sends the prompt to the local LLM, formats the response, and posts the result to GitHub.
 
 ## What AIRIC Reviews
 
-AIRIC produces a structured first-pass assessment covering:
-
-- Changed files and relevant repository context
+- Changed files and repository context
 - Potential bugs
 - Security concerns
 - Missing dependencies
 - Code-quality issues
 - Overall risk
 - Suggested improvements
-- A recommended review disposition
+- Recommended review disposition
 
-AIRIC has demonstrated the ability to identify issues such as:
-
-- Hardcoded credentials
-- SQL injection exposure
-- Bare exception handlers
-- Missing dependencies
-- Inconsistent authentication headers
-- Weak security tests
-- Configuration and documentation gaps
-
-### The important distinction
-
-AIRIC is not simply looking for keywords.
-
-It considers:
-
-- What changed
-- Where it changed
-- The surrounding repository structure
-- The apparent purpose of the file
-- Whether the change affects production behavior
-- Whether additional human investigation is required
+AIRIC has demonstrated the ability to identify hardcoded credentials, SQL injection exposure, bare exception handlers, missing dependencies, inconsistent authentication headers, weak security tests, and configuration or documentation gaps.
 
 ---
 
 ## Architecture
 
 ```mermaid
-%%{init: {
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#e0f2fe",
-    "primaryBorderColor": "#0284c7",
-    "lineColor": "#475569",
-    "secondaryColor": "#f3e8ff",
-    "tertiaryColor": "#dcfce7",
-    "fontFamily": "Segoe UI"
-  }
-}}%%
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#e0f2fe","primaryBorderColor":"#0284c7","lineColor":"#475569","secondaryColor":"#f3e8ff","tertiaryColor":"#dcfce7","fontFamily":"Segoe UI"}}}%%
 flowchart TB
     subgraph GitHub["GitHub"]
         PR["Pull request"]
         API["GitHub API"]
         COMMENT["Review comment"]
     end
-
     subgraph Runner["Ephemeral AIRIC runner"]
         ORCH["Deterministic orchestration"]
         CONTEXT["Context builder"]
@@ -152,70 +99,38 @@ flowchart TB
         REVIEWER["AIRIC reviewer"]
         FORMATTER["Markdown formatter"]
     end
-
     subgraph LocalAI["Local AI runtime"]
         LM["LM Studio endpoint"]
         MODEL["Gemma 4 12B QAT"]
     end
-
-    PR --> ORCH
-    ORCH --> API
-    API --> CONTEXT
-    CONTEXT --> BUDGET
-    BUDGET --> REVIEWER
-    REVIEWER --> LM
-    LM --> MODEL
-    MODEL --> LM
-    LM --> REVIEWER
-    REVIEWER --> FORMATTER
-    FORMATTER --> API
-    API --> COMMENT
+    PR --> ORCH --> API --> CONTEXT --> BUDGET --> REVIEWER --> LM --> MODEL
+    MODEL --> LM --> REVIEWER --> FORMATTER --> API --> COMMENT
 
     classDef github fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:2px
     classDef runner fill:#f3e8ff,stroke:#9333ea,color:#3b0764,stroke-width:2px
     classDef local fill:#dcfce7,stroke:#16a34a,color:#052e16,stroke-width:2px
-
     class PR,API,COMMENT github
     class ORCH,CONTEXT,BUDGET,REVIEWER,FORMATTER runner
     class LM,MODEL local
 ```
 
-### Data boundary
+### Data Boundary
 
 ```mermaid
-%%{init: {
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#dcfce7",
-    "primaryBorderColor": "#16a34a",
-    "lineColor": "#475569",
-    "secondaryColor": "#fee2e2",
-    "fontFamily": "Segoe UI"
-  }
-}}%%
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#dcfce7","primaryBorderColor":"#16a34a","lineColor":"#475569","secondaryColor":"#fee2e2","fontFamily":"Segoe UI"}}}%%
 flowchart LR
     subgraph Enterprise["🏢 Enterprise boundary"]
-        A["PR diff"]
-        B["Ephemeral runner"]
-        C["Local LLM endpoint"]
-        D["Gemma 4 12B QAT"]
-        E["Review result"]
-
-        A --> B --> C --> D --> C --> E
+        A["PR diff"] --> B["Ephemeral runner"] --> C["Local LLM endpoint"] --> D["Gemma 4 12B QAT"]
+        D --> C --> E["Review result"]
     end
-
     X["☁️ External AI service"]
-
     C -. "No model-inference call" .-> X
 
     classDef internal fill:#dcfce7,stroke:#16a34a,color:#052e16,stroke-width:2px
     classDef external fill:#fee2e2,stroke:#dc2626,color:#450a0a,stroke-width:2px,stroke-dasharray:5 5
-
     class A,B,C,D,E internal
     class X external
 ```
-
-The model processes pull request diffs, does not retain input for future training, and is designed to keep inference inside the enterprise boundary. Communication between the runner and the model occurs through a local endpoint.
 
 ---
 
@@ -275,78 +190,91 @@ The preferred review pattern is simple:
 
 ## Value Proposition
 
-### For developers
+### For Developers
 
 - Faster first feedback
-- Less waiting for basic review findings
-- Actionable comments in the existing pull request
-- A consistent review format across repositories
-- Fewer context switches between tools
+- Actionable comments in the pull request
+- Consistent review format
+- Fewer context switches
 
-### For reviewers
+### For Reviewers
 
-- A prepared first pass before manual review
+- A prepared first pass
 - Earlier identification of likely hotspots
 - More time for architecture, intent, and business logic
 - A documented trail of findings and responses
 
-### For security and governance
+### For Security and Governance
 
 - Local source-code processing
 - Stateless AI interactions
 - No intended external model telemetry
 - Human approval remains part of the workflow
-- Consistent review output supports auditability
+- Consistent output supports auditability
 
-### For the organization
+### For the Organization
 
 - Reduced dependence on paid cloud inference for pull request reviews
-- A reusable capability that can be enabled across repositories
+- Reusable capability across repositories
 - More predictable per-developer AI costs
-- Shared standards instead of one-off team implementations
-- A foundation for future quality gates and engineering automation
+- Shared standards instead of one-off implementations
+- Foundation for future quality gates and engineering automation
 
 ---
 
-## Per-Developer Token Cost Value Proposition
+## AI-First Developer Cost Baseline
 
 > [!IMPORTANT]
-> The costs and savings below are **estimated per developer**. They are planning scenarios, not measured AIRIC savings.
+> A fully unconstrained AI-first software engineer requires an estimated monthly operating budget of **$780 to $2,410 per developer**, or **$9,360 to $28,920 annualized**.
+>
+> These figures are planning estimates for a broader AI-first engineering model, not measured AIRIC spending.
 
-### Known per-developer cost points
+### 📊 Comprehensive Cost Breakdown
 
-| Cost point | Monthly per developer | Annual per developer |
-|---|---:|---:|
-| Current controlled cloud-AI budget | $39 | $468 |
-| Evaluated higher cloud-AI budget | $80 | $960 |
-| AIRIC cloud-model token cost | $0 | $0 |
+| Expense category | Low estimate per developer/month | High estimate per developer/month | Rationale |
+|---|---:|---:|---|
+| Fixed subscriptions | $30 | $60 | Baseline interactive IDE and chat utilities such as Cursor Pro, GitHub Copilot, and ChatGPT Enterprise. |
+| Low-intensity API traffic | $50 | $150 | Quick debugging, syntax checks, and ad hoc questions using custom API keys. |
+| High-intensity agentic API | $150 | $400 | Large token consumption from autonomous coding agents and repository-scale context. |
+| CI/CD multi-agent automation | $500 | $1,500 | Multi-step agent loops triggered by commits for testing, review, and refactoring. |
+| Specialized models and fine-tuning | $50 | $300 | Domain-specific customization, fine-tuning, or multimodal workloads. |
+| **Total per developer** | **$780** | **$2,410** | **Annualized: $9,360 to $28,920** |
 
-AIRIC does not eliminate every AI cost. Developers may still use GitHub Copilot or other approved tools for coding, research, or complex analysis. AIRIC specifically avoids using paid cloud-model tokens for the repeatable pull request review step.
+```mermaid
+xychart-beta
+    title "Estimated AI-First Operating Cost per Developer"
+    x-axis ["Low Monthly", "High Monthly", "Low Annual", "High Annual"]
+    y-axis "USD per developer" 0 --> 30000
+    bar [780, 2410, 9360, 28920]
+```
+
+### 💡 Core Budget Realities and Hidden Costs
+
+- ⚠️ **Long-context tax:** In the supplied planning scenario, a 200,000-token context can cost approximately **$0.60 to $1.00 per interaction**. At 50 interactions per day, that becomes approximately **$15 to $30 daily**.
+- 📈 **Runaway agent loops:** Autonomous agents can enter long multi-turn loops. Hard spending limits, timeouts, iteration limits, and approval gates are required.
+- 🛠️ **Infrastructure optimization:** Internally hosted open-weights models can handle syntax checks, first-pass review, and test scaffolding. Frontier models can be reserved for deeper synthesis.
 
 ---
 
 ## Hardware-Based Cost-to-Serve Model
 
-> [!IMPORTANT]
-> AIRIC already runs on locally owned hardware. Electricity and utility rates are intentionally excluded from this model because the local utility provider does not need an electricity chargeback for this use case.
-
-### Current serving footprint
+### Current Serving Footprint
 
 | Host type | AIRIC hardware basis | Role in the model |
 |---|---|---|
-| Local developer host | High-performance local workstation | Runs local AIRIC LLM workloads close to the developer |
-| Shared lab host | Shared GPU-accelerated host | Provides shared GPU-backed inference capacity |
+| Local developer host | MacBook Pro M5 with 48 GB unified memory | Runs local AIRIC LLM workloads close to the developer. |
+| Shared lab host | Headless Debian Linux system with 16 CPUs, 20 GB RAM, and one NVIDIA RTX 5060 Ti with 16 GB VRAM | Provides shared GPU-backed inference capacity. |
 
-This changes the AIRIC cost story. AIRIC is not introducing a metered token expense. It is using hardware that is already available to the team.
+AIRIC uses hardware already available to the team and avoids managed AI platform and inference charges for pull request reviews, such as usage through AWS Bedrock.
 
-### Two views of cost
+### Two Views of Cost
 
 | Cost view | What it includes | AIRIC implication |
 |---|---|---|
-| **Incremental cash cost** | New spending caused directly by an AIRIC review | **Approximately $0 per review** when existing hardware and support capacity are used |
-| **Fully allocated cost** | A share of hardware depreciation and AIRIC support effort | Useful for internal planning, but not a new token or API charge |
+| **Incremental cash cost** | New spending caused directly by an AIRIC review | **Approximately $0 per review** when existing hardware and team capacity are used. |
+| **Fully allocated cost** | A share of hardware depreciation and AIRIC support effort | Useful for internal planning, but not a managed AI platform, hosted inference, or API charge. |
 
-### Cost model
+### Cost Model
 
 ```text
 Annual hardware cost to serve
@@ -363,50 +291,23 @@ Cost per AIRIC review
 ÷ annual completed AIRIC reviews
 ```
 
-Where:
+### Hardware Treatment
 
-```text
-Annualized dedicated MacBook cost
-= number of MacBooks dedicated to AIRIC
-× acquisition cost per MacBook
-÷ useful life in years
+MacBooks should only be charged fully to AIRIC if they were purchased specifically for AIRIC and are substantially dedicated to AIRIC workloads. If AIRIC runs on developer MacBooks already required for engineering work, the incremental hardware charge is **$0**.
 
-Annualized lab-box cost
-= AIRIC-attributed share of lab-box acquisition cost
-÷ useful life in years
-```
+The shared Debian RTX 5060 Ti host should be allocated based on acquisition cost, expected useful life, percentage of capacity reserved for AIRIC, and incremental maintenance or replacement cost caused by AIRIC.
 
-### Treatment of the Local Workstations
-
-The local workstations should only be charged fully to AIRIC if they were purchased specifically for AIRIC and are substantially dedicated to serving AIRIC workloads.
-
-If AIRIC runs opportunistically on developer workstations that were already required for normal engineering work, the correct incremental hardware charge is **$0**. A utilization allocation may still be shown for planning, but it is not new AIRIC spending.
-
-### Treatment of the Shared GPU-accelerated host
-
-The shared GPU-accelerated host is the clearest shared serving asset. Its allocable AIRIC cost should be based on:
-
-- The acquisition cost of the host
-- Its expected useful life
-- The percentage of its capacity reserved for AIRIC
-- Any incremental maintenance or replacement cost caused by AIRIC
-
-Electricity is excluded.
-
-### Recommended baseline
+### Recommended Baseline
 
 | Cost component | Incremental model | Fully allocated model |
 |---|---:|---:|
-| Existing local workstations | $0 | AIRIC utilization share of annual depreciation |
-| Existing shared GPU-accelerated host | $0 if already owned | AIRIC share of annual depreciation |
-| Cloud-model tokens for AIRIC reviews | $0 | $0 |
-| Electricity | $0 | $0 |
+| Existing MacBook Pro M5 hosts | $0 | AIRIC utilization share of annual depreciation |
+| Existing Debian RTX 5060 Ti lab box | $0 if already owned | AIRIC share of annual depreciation |
+| Managed AI platform services for AIRIC reviews, such as AWS Bedrock | $0 | $0 |
 | Existing team support | $0 incremental | Optional labor allocation |
 | New AIRIC-only hardware | Actual purchase cost | Annual depreciation |
 
-### Illustrative capacity allocation
-
-The table below shows how a **single annual AIRIC infrastructure cost** spreads across enabled developers. It does not assume a hardware purchase price. Replace the annual infrastructure amount with the actual depreciated and AIRIC-attributed hardware cost.
+### Illustrative Capacity Allocation
 
 | Annual AIRIC infrastructure allocation | 10 developers | 50 developers | 100 developers | 500 developers |
 |---:|---:|---:|---:|---:|
@@ -414,8 +315,6 @@ The table below shows how a **single annual AIRIC infrastructure cost** spreads 
 | $1,000 fully allocated | $100 | $20 | $10 | $2 |
 | $2,500 fully allocated | $250 | $50 | $25 | $5 |
 | $5,000 fully allocated | $500 | $100 | $50 | $10 |
-
-### Cost-to-serve graph
 
 ```mermaid
 xychart-beta
@@ -425,79 +324,62 @@ xychart-beta
     line [250, 50, 25, 5]
 ```
 
-The graph uses a **$2,500 annual fully allocated infrastructure scenario**. It demonstrates the platform effect: the same local serving capacity becomes less expensive per developer as adoption grows.
+The graph uses a **$2,500 annual fully allocated infrastructure scenario** and demonstrates the platform effect: the same local serving capacity becomes less expensive per developer as adoption grows.
 
-### Comparison with per-developer cloud budgets
+### AIRIC Compared with the AI-First Cost Baseline
 
-| Scenario | Annual cost per developer |
-|---|---:|
-| Current controlled cloud-AI budget | $468 |
-| Evaluated higher cloud-AI budget | $960 |
-| AIRIC incremental token cost | $0 |
-| AIRIC incremental infrastructure cost on existing hardware | Approximately $0 |
-| AIRIC fully allocated infrastructure cost | Depends on actual acquisition cost, useful life, AIRIC allocation, and enabled-developer count |
+| Scenario | Monthly cost per developer | Annual cost per developer |
+|---|---:|---:|
+| AI-first operating budget, low estimate | $780 | $9,360 |
+| AI-first operating budget, high estimate | $2,410 | $28,920 |
+| Managed AI platform and inference cost for AIRIC PR review, such as AWS Bedrock | $0 | $0 |
+| AIRIC incremental infrastructure cost on existing hardware | Approximately $0 | Approximately $0 |
+| AIRIC fully allocated infrastructure cost | Depends on acquisition cost, useful life, AIRIC allocation, support effort, and enabled-developer count | Same basis annualized |
 
-### Savings formula
+### Avoided-Cost Formula
 
 ```text
-Annual avoided cloud cost per developer
-= cloud PR-review cost displaced by AIRIC
+Annual managed AI platform cost displaced by AIRIC per developer
+= managed AI platform and hosted-inference usage avoided by local AIRIC reviews
 
-Annual net savings per developer
-= avoided cloud PR-review cost
+Annual net value per developer
+= cloud PR-review cost displaced
 - AIRIC fully allocated cost per developer
 ```
 
-AIRIC should not claim that the full $39 or $80 monthly developer budget is saved unless telemetry proves that the full amount would otherwise have been consumed by pull request review. The defensible claim is:
+The full **$780 to $2,410 monthly AI-first operating budget** should not be presented as AIRIC savings. AIRIC addresses one workload within that budget: automated pull request review. Savings must be based on the managed AI platform, hosted inference, agentic workflow, or CI/CD review consumption that AIRIC actually displaces.
 
-> **AIRIC performs pull request reviews with no metered cloud-token charge and near-zero incremental infrastructure cost when it uses the existing MacBook Pro and Debian RTX 5060 Ti serving footprint.**
-
-### What to measure next
-
-To turn this model into observed unit economics, capture:
-
-- Number of enabled developers
-- Completed AIRIC reviews
-- Reviews served by MacBooks versus the lab box
-- Actual hardware acquisition cost
-- Useful life used for internal depreciation
-- Percentage of each host attributable to AIRIC
-- Incremental AIRIC support hours
-- Cloud PR-review credits displaced
-
-With those values, AIRIC can report:
-
-- Cost per enabled developer
-- Cost per completed review
-- Incremental cash cost
-- Fully allocated cost
-- Avoided cloud-token cost
-- Net savings
+> **Defensible value statement:** AIRIC performs automated pull request reviews with no managed AI platform or hosted-inference charge and near-zero incremental infrastructure cost when it uses the existing MacBook Pro M5 and Debian RTX 5060 Ti serving footprint.
 
 ---
 
 ## Business Value Beyond Tokens
 
-Token savings are the easiest value to see, but they may not be the largest.
-
 ```mermaid
 %%{init: {
   "theme": "base",
   "themeVariables": {
-    "primaryColor": "#dbeafe",
-    "primaryBorderColor": "#2563eb",
-    "lineColor": "#64748b",
-    "secondaryColor": "#dcfce7",
-    "tertiaryColor": "#fef3c7",
+    "background": "#0f172a",
+    "primaryColor": "#1d4ed8",
+    "primaryTextColor": "#ffffff",
+    "primaryBorderColor": "#93c5fd",
+    "secondaryColor": "#047857",
+    "secondaryTextColor": "#ffffff",
+    "secondaryBorderColor": "#6ee7b7",
+    "tertiaryColor": "#a16207",
+    "tertiaryTextColor": "#ffffff",
+    "tertiaryBorderColor": "#fde68a",
+    "lineColor": "#e2e8f0",
+    "textColor": "#ffffff",
     "fontFamily": "Segoe UI"
   }
 }}%%
 mindmap
   root((AIRIC Value))
     Cost
-      Avoid paid PR-review tokens
+      Avoid managed PR-review inference
       Predictable local inference
-      Protect shared credit pools
+      Protect shared budgets
     Delivery
       Faster first feedback
       Reduce reviewer toil
@@ -516,62 +398,30 @@ mindmap
       Enable many teams
 ```
 
-Potential value not included in the financial projection:
-
-- Developer time saved
-- Reviewer time saved
-- Faster pull request turnaround
-- Earlier security issue detection
-- Fewer escaped defects
-- Reduced rework
-- More consistent engineering standards
-
-These benefits require measured AIRIC telemetry before they should be converted into financial claims.
+Potential value not included in the financial projection includes developer time saved, reviewer time saved, faster pull request turnaround, earlier security issue detection, fewer escaped defects, reduced rework, and more consistent engineering standards.
 
 ---
 
 ## Known Constraints
 
-### AI output still requires validation
-
-Gemma 4 is a stochastic language model. Findings may be incomplete or incorrect.
-
-### Large pull requests reduce effective context
-
-AIRIC manages context-window limits and may truncate oversized diffs. Smaller, focused pull requests provide better review context.
-
-### Workflow reliability must be measured
-
-Development history includes workflow failures and runs where no jobs executed. Operational telemetry and failure visibility are required before AIRIC becomes a mandatory quality gate.
-
-### AIRIC does not replace specialized tools
-
-AIRIC should complement, not replace:
-
-- Human code review
-- Static code analysis
-- Dependency scanning
-- Secret scanning
-- Automated tests
-- Required repository controls
+- **AI output requires validation:** Gemma 4 is stochastic, so findings may be incomplete or incorrect.
+- **Large pull requests reduce context:** Oversized diffs may be truncated. Smaller pull requests provide better review context.
+- **Workflow reliability must be measured:** Operational telemetry is required before AIRIC becomes a mandatory quality gate.
+- **AIRIC complements specialized tools:** It does not replace human review, static analysis, dependency scanning, secret scanning, automated tests, or repository controls.
 
 ---
 
 ## Success Measures
 
-AIRIC should be evaluated with observable metrics rather than adoption counts alone.
-
 | Measure | Why it matters |
 |---|---|
-| Reviews completed | Confirms workflow adoption |
+| Reviews completed | Confirms adoption |
 | Review completion rate | Exposes execution failures |
 | Median review duration | Measures feedback speed |
-| Findings accepted | Indicates practical usefulness |
-| Findings dismissed | Helps identify noise |
+| Findings accepted or dismissed | Measures usefulness and noise |
 | High-risk findings confirmed | Measures security value |
-| Re-review rate | Shows whether feedback drives changes |
 | Human override rate | Protects human accountability |
-| Cloud credits avoided per developer | Measures direct cost value |
+| Managed AI costs displaced per developer | Measures direct cost value |
 | AIRIC operating cost per developer | Validates the cost model |
 | Reviewer time saved | Measures labor value |
 | Escaped defects | Measures downstream quality |
@@ -619,8 +469,6 @@ flowchart LR
 
 ## Recommended Next Step
 
-Instrument AIRIC before making a broader financial claim.
-
 Capture the following for every review:
 
 ```yaml
@@ -634,30 +482,20 @@ findings_total: 4
 findings_accepted: 3
 findings_dismissed: 1
 re_review_requested: true
-estimated_cloud_credits_avoided: 30
+estimated_managed_ai_cost_displaced: null
 airic_compute_cost: null
 human_review_minutes_saved: null
+serving_host: macbook-or-lab
 ```
 
-Once this telemetry exists, the projections can be replaced with observed:
-
-- Cost per AIRIC review
-- AIRIC cost per developer
-- Credits avoided per developer
-- Monthly and annual savings per developer
-- Reviewer time saved
-- Findings accepted
-- Confirmed security defects
-- Workflow reliability
+This enables AIRIC to report cost per review, cost per enabled developer, incremental cash cost, fully allocated cost, managed AI platform cost displaced, reviewer time saved, and net value.
 
 ---
 
 ## Conclusion
 
-AIRIC moves routine AI-assisted pull request review from a variable cloud-consumption model to a reusable local platform capability.
-
-Its value proposition is straightforward:
+AIRIC moves routine AI-assisted pull request review from variable cloud consumption to a reusable local platform capability.
 
 > **Use local AI for the repeatable first pass, reserve paid cloud AI for work that needs it, and keep the final engineering decision with a human.**
 
-The immediate benefit is pull request review with **no metered cloud-token charge** and **near-zero incremental infrastructure cost** on the existing local serving footprint. The larger opportunity is a consistent, secure, and scalable review pattern that gives engineers faster feedback while reducing reviewer toil.
+The immediate benefit is automated pull request review with **no managed AI platform or hosted-inference charge** and **near-zero incremental infrastructure cost** on the existing local serving footprint. This helps offset one recurring workload inside an estimated **$780 to $2,410 monthly AI-first operating budget per developer**.
