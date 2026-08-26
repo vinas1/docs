@@ -1,0 +1,27 @@
+{
+  "beautify.language": {
+    "js": {}
+  },
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false,
+  "git.autofetch": true,
+  "git.terminalAuthentication": true,
+
+  "terminal.integrated.enableMultiLinePasteWarning": "never",
+
+  "redhat.telemetry.enabled": true,
+
+  "security.workspace.trust.startupPrompt": "always",
+  "security.promptForLocalFileProtocolHandling": false,
+  "security.promptForRemoteFileProtocolHandling": false,
+  "security.workspace.trust.banner": "always",
+  "security.workspace.trust.enabled": false,
+  "security.workspace.trust.emptyWindow": false,
+  "security.workspace.trust.untrustedFiles": "newWindow",
+
+  "workbench.editor.empty.hint": "hidden",
+  "lmstudioProxy.autoStart": false,
+  "githubPullRequests.pullRequestDescription": "Copilot",
+  "files.dialog.defaultPath": "D:\\c0dex\\GitHub",
+  "window.restoreWindows": "none"
+}
