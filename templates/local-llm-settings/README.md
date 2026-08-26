@@ -9,7 +9,7 @@ agent backend for **Cline** in VS Code, served via **LM Studio**.
 |---|---|
 | [`CLINE.md`](./CLINE.md) | Cline (VS Code extension) settings: provider setup, Features flags, Auto-Approve, MCP, Plan/Act behavior |
 | [`GEMMA.md`](./GEMMA.md) | LM Studio-side settings for Gemma 4: model variants, load parameters, sampling defaults, known bugs/fixes |
-| [`.clinerules/`](../.clinerules/) | Modular agent-behavior rules (separate from this folder — see repo root) |
+| [`.clinerules/`](../vscode/.clinerules/) | Modular agent-behavior rules (separate from this folder — see repo root) |
 
 ## Reference hardware (this deployment)
 
