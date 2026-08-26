@@ -16,7 +16,8 @@ agent backend for **Cline** in VS Code, served via **LM Studio**.
 | Machine | Spec | Role |
 |---|---|---|
 | MacBook Pro M5 | 48GB unified memory | AIRIC LLM workload client |
-| Lab box | 16 CPUs, 20GB RAM, headless Debian, RTX 5060 Ti 16GB | LM Studio host (`llm.devplat.internal`) |
+| Lab box | 16 CPUs, 20GB RAM, Debian Linux, RTX 5060 Ti 16GB | LM Studio host (`GeForce`) |
+| AMD AI MAX | 16 CPUs, 128GB RAM, Rex Linux, Radeon 8060S Graphics | LM Studio host (`amd-halo`) |
 
 QAT VRAM figures in `GEMMA.md` are sized against the 16GB 5060 Ti specifically.
 
