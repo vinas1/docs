@@ -40,4 +40,4 @@ those as a tuned starting point, not a guarantee.
 
 Gemma 4 12B has a documented tool-calling failure pattern in some eval harnesses,
 with a community-found fix involving a custom chat template. See the "Known Issues"
-section in `GEMMA.md` before assuming a tool-call failure is a Cline bug. <cite>turn5search98</cite>
+section in `GEMMA.md` before assuming a tool-call failure is a Cline bug.  
