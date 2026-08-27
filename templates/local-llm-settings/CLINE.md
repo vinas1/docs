@@ -14,15 +14,62 @@ LM Studio works via its OpenAI-compatible server, same setup pattern as Ollama.
 
 ## 2. Features — Required Flags
 
-| Setting | Value | Why |
-|---|---|---|
-| **Use Compact Prompt** | **ON** | Cline's own local-model guidance: enable this for any local/self-hosted model. Shrinks the system prompt to ~10% length, freeing attention budget for tool-call formatting on small models.  
-| **Strict Plan Mode** | **ON — must be manually enabled** | Programmatically blocks file-editing tools while in Plan Mode at the extension level, regardless of what the model tries to do. This is the fix for "model edits files in Plan mode" or "model won't stop trying to edit."  
+These settings shown directly impact how local models handle tool calls and file edits.
 
-> ⚠️ **Important regression**: Strict Plan Mode was enabled by default from PR #5714
-> (Aug 2025) until PR #8931 (merged Jan 30, 2026) disabled it by default as part of a
-> UI refactor. If you're on a build after that date, **it is OFF unless you turn it
-> on yourself** — check Settings → Features.  
+Here is how each setting affects **Gemma 4 26B A4B QAT** and how to configure them for local execution:
+
+**1. Auto Compact Strategy**
+
+* **Current Setting:** `Agentic`
+* **Recommended Change:** Set to **`Truncate`** (or **`Standard`**).
+* **Why:** The `Agentic` strategy uses the LLM itself to summarize and rewrite past context. Open-source local models frequently drop system prompts, tool schemas, or strict XML instructions during agentic summaries. `Truncate` simply drops older context items cleanly, preserving system instructions.
+
+**2. Auto Compact**
+
+* **Current Setting:** `Enabled (On)`
+* **Recommended Setting:** **`Disabled (Off)`** (or leave enabled if strictly using `Truncate`).
+* **Why:** Compacting context causes local models to lose track of tool formatting rules in long sessions. With a 32k context window and 8k max tokens, you rarely need context compression for typical file editing tasks.
+
+
+
+**3. Background Edit**
+
+* **Current Setting:** `Disabled (Off)`
+* **Recommended Setting:** **`Enabled (On)`**
+* **Why:** When enabled, Cline streams diffs directly to disk via background hooks without relying purely on frontend focus handlers. This helps avoid UI dropouts when local models stream tool responses.
+
+**4. Checkpoints**
+
+* **Current Setting:** `Enabled (On)`
+* **Recommended Setting:** **`Enabled (On)`**
+* **Why:** Keeps local Git shadow commits active so you can instantly roll back if the model makes unintended edits.
+
+**5. Hooks**
+
+* **Current Setting:** `Enabled (On)`
+* **Recommended Setting:** **`Enabled (On)`**
+* **Why:** Essential for lifecycle execution and tool interception.
+
+**6. MCP Display Mode**
+
+* **Current Setting:** `Plain Text`
+* **Recommended Setting:** **`Plain Text`**
+* **Why:** Keeps tool responses lightweight, preventing extra markdown/JSON parsing overhead on local context runs.
+
+---
+
+### Quick Summary Matrix
+
+| Setting | Current | Recommended for Local LLMs | Impact |
+| --- | --- | --- | --- |
+| **Auto Compact Strategy** | Agentic | **Truncate** | Prevents loss of tool XML formatting rules. |
+| **Auto Compact** | On | **Off / Truncate** | Stops context rewrites from breaking tool execution. |
+| **Background Edit** | Off | **On** | Ensures file diffs execute reliably in the background. |
+| **Checkpoints** | On | **On** | Enables safe 1-click rollbacks. |
+| **Hooks** | On | **On** | Keeps extension tool integration functional. |
+| **MCP Display Mode** | Plain Text | **Plain Text** | Lowers context overhead for your local SearXNG MCP setup.
+
+ |
 
 ## 3. Context Window Handling
 
