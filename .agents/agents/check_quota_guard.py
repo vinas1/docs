@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 
 def get_remaining_quota_percent():
-    # Replace with local statusline inspection, rpc query, or custom metric file
-    return 9.0  # Simulated low quota threshold trigger
+    """Return remaining cloud quota percentage from env var, or 100.0 if unset."""
+    try:
+        # NOTE: When you want to test the threshold trigger, you can comment out
+        # the os.environ line and uncomment the hardcoded return below:
+        # return 9.0
+
+        return float(os.environ.get("REMAINING_QUOTA_PERCENT", "100.0"))
+    except ValueError:
+        return 100.0  # fallback to healthy state on parse error
 
 def main():
     remaining = get_remaining_quota_percent()
 
     if remaining <= 10.0:
-        # Inject transient directive via ephemeralMessage
         injection = {
             "injectSteps": [
                 {
