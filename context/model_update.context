@@ -1,0 +1,338 @@
+# Model Update Context
+
+This file provides instructions and automation procedures for updating the VS Code `chatLanguageModels.json` configuration file with the latest models from local and networked LM Studio endpoints across **Windows**, **macOS**, and **Linux**.
+
+---
+
+## 1. Target File Paths & Profile Discovery
+
+VS Code stores custom chat model definitions either in the **Default Profile** directory or in a **Custom Profile** directory.
+
+### Path by Operating System
+
+| OS | Default Profile Path | Custom Profile Path |
+|----|----------------------|---------------------|
+| **Windows** | `%APPDATA%\Code\User\chatLanguageModels.json` | `%APPDATA%\Code\User\profiles\<profile-id>\chatLanguageModels.json` |
+| **macOS** | `~/Library/Application Support/Code/User/chatLanguageModels.json` | `~/Library/Application Support/Code/User/profiles/<profile-id>/chatLanguageModels.json` |
+| **Linux** | `~/.config/Code/User/chatLanguageModels.json` | `~/.config/Code/User/profiles/<profile-id>/chatLanguageModels.json` |
+
+> [!NOTE]
+> If you switch profiles frequently in VS Code, update **both** the active profile (`profiles/<profile-id>/chatLanguageModels.json`) and the base user configuration (`Code/User/chatLanguageModels.json`).
+
+### Active Profile Auto-Detection
+
+To automatically detect the active (most recently modified) profile directory:
+
+**Windows (PowerShell):**
+```powershell
+# Detect most recently active profile, or fallback to default
+$profilesBase = "$env:APPDATA\Code\User\profiles"
+$activeProfileDir = Get-ChildItem "$profilesBase\*\globalStorage" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty Directory
+
+if ($activeProfileDir) {
+    $targetPath = Join-Path $activeProfileDir.FullName "chatLanguageModels.json"
+} else {
+    $targetPath = "$env:APPDATA\Code\User\chatLanguageModels.json"
+}
+Write-Host "Target configuration path: $targetPath"
+```
+
+**macOS / Linux (Bash):**
+```bash
+PROFILES_BASE="$HOME/.config/Code/User/profiles"
+# On macOS: PROFILES_BASE="$HOME/Library/Application Support/Code/User/profiles"
+
+LATEST_PROFILE=$(ls -td "$PROFILES_BASE"/*/globalStorage 2>/dev/null | head -n 1 | xargs dirname)
+if [ -n "$LATEST_PROFILE" ]; then
+    TARGET_PATH="$LATEST_PROFILE/chatLanguageModels.json"
+else
+    TARGET_PATH="$HOME/.config/Code/User/chatLanguageModels.json"
+fi
+echo "Target configuration path: $TARGET_PATH"
+```
+
+---
+
+## 2. Categories and Endpoints
+
+The configuration supports five categories:
+
+| Category | Endpoint URL | Description |
+|----------|-------------|-------------|
+| **Local** | `http://127.0.0.1:1234/v1` | Models hosted on the current machine (loopback) |
+| **amd-halo** | `http://amd-halo:1234/v1` | Models hosted on AMD Halo device (hostname) |
+| **geforce** | `http://geforce:1234/v1` | Models hosted on NVIDIA GeForce GPU (hostname) |
+| **LM-Link** | `http://127.0.0.1:1234/v1` | All cluster models served via loopback endpoint |
+| **Remote** | `http://127.0.0.1:1234/v1` | Remote models (amd-halo/geforce) routed via loopback |
+
+---
+
+## 3. Host Context ("Local" vs Peer Devices)
+
+When running on different machines:
+- **"Local"** always refers to whichever physical device is executing the script/process (`http://127.0.0.1:1234/v1`).
+- To inspect which machine is local vs remote, run:
+  ```bash
+  lms link status
+  ```
+  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `GeForce`).
+- If executing directly on `amd-halo`, `Local` becomes `amd-halo`, and workstation devices become remote.
+
+---
+
+## 4. URL Conventions
+
+- Use `127.0.0.1` for the local machine loopback address (**not** `localhost`).
+- Use hostnames (`amd-halo`, `geforce`) where DNS/mDNS resolution is available on your local network.
+- **No remote IPs**: All endpoints resolve locally via hostname or loopback — avoid hardcoded external or link-local IPs (`169.254.x.x`).
+
+---
+
+## 5. Model Discovery & Parsing
+
+### Step 1: Run `lms ls`
+
+Run the LM Studio CLI to get the authoritative list of models and their hosting devices:
+
+```bash
+lms ls
+```
+
+Or for structured JSON:
+```bash
+lms ls --json
+```
+
+### Step 2: Handle Multi-Device Models & Variants
+
+- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `GeForce`, and `amd-halo`).
+- Standard text output of `lms ls` may contain variant annotations (e.g., `google/gemma-4-12b-qat (1 variant)`).
+- **Regex pattern for text parsing:**
+  ```regex
+  ^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+
+  ```
+  And capture the device column matching `\s+(Local|amd-halo|GeForce)\b`.
+
+### Step 3: Categorize Models
+
+- **`Local`**: Models where `DEVICE == Local`. URL: `http://127.0.0.1:1234/v1`.
+- **`amd-halo`**: Models where `DEVICE == amd-halo`. URL: `http://amd-halo:1234/v1`.
+- **`geforce`**: Models where `DEVICE == GeForce`. URL: `http://geforce:1234/v1`.
+- **`LM-Link`**: All distinct cluster models returned by `http://127.0.0.1:1234/v1/models`. URL: `http://127.0.0.1:1234/v1`.
+- **`Remote`**: Models whose hosting device is remote (`amd-halo` or `GeForce`), routed via `http://127.0.0.1:1234/v1`.
+
+---
+
+## 6. Schema Requirements
+
+For each category, define an object with a `models` array in `chatLanguageModels.json`:
+
+```json
+{
+  "name": "<category-name>",
+  "vendor": "customendpoint",
+  "apiType": "chat-completions",
+  "models": [
+    {
+      "id": "<model-id>",
+      "name": "<display-name>",
+      "url": "<endpoint-url>",
+      "toolCalling": true,
+      "vision": true,
+      "maxInputTokens": 94208,
+      "maxOutputTokens": 8192
+    }
+  ]
+}
+```
+
+**Required fields per model:**
+| Field | Value | Notes |
+|-------|-------|-------|
+| `id` | From API response | Unique model identifier |
+| `name` | Human-readable title | Display name in VS Code Chat |
+| `url` | Match category endpoint | `http://127.0.0.1:1234/v1`, `http://amd-halo:1234/v1`, or `http://geforce:1234/v1` |
+| `toolCalling` | `true` | Enable tool calling support |
+| `vision` | `true` | Enable vision support |
+| `maxInputTokens` | `94208` | Default context window |
+| `maxOutputTokens` | `8192` | Default output limit |
+
+---
+
+## 7. Safety, Verification & Reload
+
+1. **Backup:** Always create a `.bak` backup copy before writing.
+2. **Complete Overwrite:** Write the entire valid JSON structure in one operation. **Never append** to existing arrays to prevent syntax corruption.
+3. **Validate Syntax:**
+   - PowerShell: `Get-Content $path -Raw | ConvertFrom-Json`
+   - Bash: `jq . "$path"`
+4. **Verify Endpoints:** Check that no invalid URLs were generated:
+   ```powershell
+   # Windows PowerShell
+   Select-String -Path 'chatLanguageModels.json' -Pattern 'localhost|169\.254\.' | Select-Object LineNumber, Line
+   ```
+   ```bash
+   # macOS / Linux
+   grep -n 'localhost\|169\.254\.' chatLanguageModels.json
+   ```
+   *Expected result: 0 matches.*
+5. **Reload VS Code Chat:**
+   ```bash
+   code --reload-window
+   ```
+   Or run **Developer: Reload Window** (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+
+---
+
+## 8. Complete Automated PowerShell Script
+
+Save and run this script on Windows to automatically query endpoints, resolve profiles, validate, back up, and update `chatLanguageModels.json`:
+
+```powershell
+# update-chat-models.ps1
+$ErrorActionPreference = "Stop"
+
+# 1. Human-readable name mapping
+$nameMap = @{
+    "gemma-4-12b-heretic-abliterated"               = "Gemma 4 12B Heretic Abliterated"
+    "google/gemma-4-12b-qat"                         = "Gemma 4 12B QAT"
+    "google/gemma-4-26b-a4b-qat"                     = "Gemma 4 26B A4B QAT"
+    "google/gemma-4-31b-qat"                         = "Gemma 4 31B QAT"
+    "glm-4.7-flash"                                  = "GLM 4.7 Flash"
+    "gpt-oss-120b"                                   = "Lemonade GPT OSS 120B (Q4_K_M)"
+    "meta/muse-glimmer"                              = "Meta Muse Glimmer 28B"
+    "nvidia/nemotron-3-nano-4b"                      = "Nemotron 3 Nano 4B"
+    "nvidia/nemotron-3-nano-omni"                    = "Nemotron 3 Nano Omni 30B-A3B"
+    "nvidia/nemotron-3-super"                        = "Nemotron 3 Super 120B"
+    "nvidia/nemotron-3.5-super-vl"                   = "Nemotron 3.5 Super VL 120B"
+    "qwen/qwen3-4b-2507"                             = "Qwen 3 4B 2507"
+    "qwen/qwen3-coder-next"                          = "Qwen 3 Coder Next"
+    "qwen/qwen3.5-9b"                                = "Qwen 3.5 9B"
+    "qwen3-1.7b"                                     = "Qwen 3 1.7B"
+    "qwen3-coder-30b-a3b-instruct"                   = "Unsloth Qwen 3 Coder 30B A3B Instruct"
+    "qwen3.5-122b-a10b"                              = "Qwen 3.5 122B A10B (Unsloth Q4_K_M)"
+    "qwen3.6-35b-a3b"                                = "Qwen 3.6 35B A3B (Unsloth Q8_0)"
+    "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = "Qwen 3.6 35B A3B Uncensored Hauhaucs Aggressive"
+    "qwen3.8-27b"                                    = "Unsloth Qwen 3.8 27B"
+    "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = "Qwen 3.8 27B Uncensored Hauhaucs Aggressive MTP"
+    "unsloth/qwen3-coder-next"                       = "Qwen 3 Coder Next 80B-A3B (Unsloth Q4_K_M)"
+    "text-embedding-nomic-embed-text-v1.5"           = "Text Embedding Nomic Embed Text v1.5"
+}
+
+function Build-ModelEntry($id, $url) {
+    $displayName = if ($nameMap.ContainsKey($id)) { $nameMap[$id] } else { $id }
+    return [ordered]@{
+        id              = $id
+        name            = $displayName
+        url             = $url
+        toolCalling     = $true
+        vision          = $true
+        maxInputTokens  = 94208
+        maxOutputTokens = 8192
+    }
+}
+
+# 2. Parse LMS authoritative device list
+Write-Host "Fetching authoritative device list from 'lms ls'..." -ForegroundColor Cyan
+$lmsLines = lms ls
+$localIds = @()
+$amdHaloIds = @()
+$geforceIds = @()
+
+foreach ($line in $lmsLines) {
+    if ($line -match '^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+') {
+        $id = $matches[1]
+        if ($line -match '\s+(Local|amd-halo|GeForce)\b') {
+            $device = $matches[1]
+            if ($device -eq 'Local') { $localIds += $id }
+            elseif ($device -eq 'amd-halo') { $amdHaloIds += $id }
+            elseif ($device -eq 'GeForce') { $geforceIds += $id }
+        }
+    }
+}
+
+$localIds = $localIds | Sort-Object -Unique
+$amdHaloIds = $amdHaloIds | Sort-Object -Unique
+$geforceIds = $geforceIds | Sort-Object -Unique
+
+# 3. Fetch cluster models via loopback for LM-Link and Remote
+Write-Host "Fetching cluster models from http://127.0.0.1:1234/v1/models..." -ForegroundColor Cyan
+$apiModels = (Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id
+$lmLinkIds = ($apiModels + $nameMap.Keys | Sort-Object -Unique)
+$remoteIds = ($amdHaloIds + $geforceIds | Sort-Object -Unique)
+
+# 4. Construct category objects
+$categories = @(
+    [ordered]@{
+        name     = "Local"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($localIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+    },
+    [ordered]@{
+        name     = "amd-halo"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($amdHaloIds | ForEach-Object { Build-ModelEntry $_ "http://amd-halo:1234/v1" })
+    },
+    [ordered]@{
+        name     = "geforce"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($geforceIds | ForEach-Object { Build-ModelEntry $_ "http://geforce:1234/v1" })
+    },
+    [ordered]@{
+        name     = "LM-Link"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($lmLinkIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+    },
+    [ordered]@{
+        name     = "Remote"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($remoteIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+    }
+)
+
+$jsonContent = $categories | ConvertTo-Json -Depth 5
+
+# 5. Resolve target paths (active profile + base User configuration)
+$targets = @()
+$baseConfig = "$env:APPDATA\Code\User\chatLanguageModels.json"
+$targets += $baseConfig
+
+$activeProfileDir = Get-ChildItem "$env:APPDATA\Code\User\profiles\*\globalStorage" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty Directory
+
+if ($activeProfileDir) {
+    $targets += (Join-Path $activeProfileDir.FullName "chatLanguageModels.json")
+}
+
+$targets = $targets | Select-Object -Unique
+
+# 6. Validate & Write
+foreach ($target in $targets) {
+    if (Test-Path $target) {
+        Copy-Item -Path $target -Destination "$target.bak" -Force
+        Write-Host "Created backup: $target.bak"
+    }
+    [System.IO.File]::WriteAllText($target, $jsonContent, [System.Text.Encoding]::UTF8)
+    Write-Host "Successfully updated: $target" -ForegroundColor Green
+
+    # Validate syntax
+    $null = Get-Content $target -Raw | ConvertFrom-Json
+}
+
+# 7. Verify no localhost or 169.254. occurrences
+$invalidMatches = Select-String -Path $targets -Pattern 'localhost|169\.254\.'
+if ($invalidMatches.Count -gt 0) {
+    Write-Warning "Found invalid URLs in output!"
+    $invalidMatches | Format-Table LineNumber, Line
+} else {
+    Write-Host "URL verification passed (0 invalid URLs)." -ForegroundColor Green
+}
+
+Write-Host "To apply changes in VS Code, run: code --reload-window" -ForegroundColor Cyan
+```
