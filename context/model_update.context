@@ -124,7 +124,7 @@ lms ls --json
 
 ---
 
-## 6. Schema Requirements
+## 6. Schema Requirements & Per-Model Context Limits
 
 For each category, define an object with a `models` array in `chatLanguageModels.json`:
 
@@ -140,23 +140,25 @@ For each category, define an object with a `models` array in `chatLanguageModels
       "url": "<endpoint-url>",
       "toolCalling": true,
       "vision": true,
-      "maxInputTokens": 94208,
+      "maxInputTokens": 65536,
       "maxOutputTokens": 8192
     }
   ]
 }
 ```
 
-**Required fields per model:**
-| Field | Value | Notes |
-|-------|-------|-------|
-| `id` | From API response | Unique model identifier |
-| `name` | Human-readable title | Display name in VS Code Chat |
-| `url` | Match category endpoint | `http://127.0.0.1:1234/v1`, `http://amd-halo:1234/v1`, or `http://geforce:1234/v1` |
-| `toolCalling` | `true` | Enable tool calling support |
-| `vision` | `true` | Enable vision support |
-| `maxInputTokens` | `94208` | Default context window |
-| `maxOutputTokens` | `8192` | Default output limit |
+### Context Window Allocation (Reasonable Limits $\le$ 100k)
+
+> [!IMPORTANT]
+> **Do not set a blanket 100k context for all models.** Over-allocating context on tiny or embedding models causes out-of-memory errors or exceeds trained context limits. Context sizes must be set to a reasonable limit based on model architecture and parameter count, erroring on the side of higher context by **no more than 100k**:
+
+| Tier | `maxInputTokens` | `maxOutputTokens` | Target Models | Rationale |
+|:---|:---:|:---:|:---|:---|
+| **94k** | `94208` | `8192` | `google/gemma-4-26b-a4b-qat`<br>`google/gemma-4-31b-qat`<br>`qwen3.8-27b` | Dedicated long-context prose, RFC/architecture documentation, and Mermaid diagramming specialists (optimal 64k–94k). |
+| **65k** | `65536` | `8192` | `unsloth/qwen3-coder-next`<br>`qwen/qwen3-coder-next`<br>`qwen3.6-35b-a3b`<br>`qwen3.5-122b-a10b`<br>`gpt-oss-120b`<br>`google/gemma-4-12b-qat`<br>`gemma-4-12b-heretic-abliterated`<br>`qwen/qwen3.5-9b`<br>`nvidia/nemotron-3-super`<br>`nvidia/nemotron-3.5-super-vl`<br>`qwen3-coder-30b-a3b-instruct`<br>`qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive`<br>`qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp` | Primary backend coding agents, deep reasoning MoEs, and mid-size general models. Errs on the high side of their 32k–64k optimal range while avoiding memory bandwidth bottlenecks. |
+| **49k** | `49152` | `8192` | `glm-4.7-flash`<br>`qwen/qwen3-4b-2507`<br>`nvidia/nemotron-3-nano-4b`<br>`nvidia/nemotron-3-nano-omni`<br>`meta/muse-glimmer` | Lightweight 4B models, high-speed UI/frontend specialists, and watchdog/helper models. |
+| **32k** | `32768` | `4096` | `qwen3-1.7b` | Tiny 1.7B edge/draft model (native max context is 40,960). |
+| **2k** | `2048` | `512` | `text-embedding-nomic-embed-text-v1.5` | Local vector embedding model (native max context is 2,048). |
 
 ---
 
@@ -220,20 +222,48 @@ $nameMap = @{
     "text-embedding-nomic-embed-text-v1.5"           = "Text Embedding Nomic Embed Text v1.5"
 }
 
+# 2. Per-model context limits (reasonable limits erroring on higher side <= 100k)
+$contextMap = @{
+    "text-embedding-nomic-embed-text-v1.5"           = @{ maxInput = 2048;  maxOutput = 512 }
+    "qwen3-1.7b"                                     = @{ maxInput = 32768; maxOutput = 4096 }
+    "qwen/qwen3-4b-2507"                             = @{ maxInput = 49152; maxOutput = 8192 }
+    "nvidia/nemotron-3-nano-4b"                      = @{ maxInput = 49152; maxOutput = 8192 }
+    "glm-4.7-flash"                                  = @{ maxInput = 49152; maxOutput = 8192 }
+    "nvidia/nemotron-3-nano-omni"                    = @{ maxInput = 49152; maxOutput = 8192 }
+    "meta/muse-glimmer"                              = @{ maxInput = 49152; maxOutput = 8192 }
+    "qwen3-coder-30b-a3b-instruct"                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "nvidia/nemotron-3-super"                        = @{ maxInput = 65536; maxOutput = 8192 }
+    "nvidia/nemotron-3.5-super-vl"                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3.5-9b"                                = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-12b-qat"                         = @{ maxInput = 65536; maxOutput = 8192 }
+    "gemma-4-12b-heretic-abliterated"               = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3.6-35b-a3b"                                = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = @{ maxInput = 65536; maxOutput = 8192 }
+    "unsloth/qwen3-coder-next"                       = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3-coder-next"                          = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3.5-122b-a10b"                              = @{ maxInput = 65536; maxOutput = 8192 }
+    "gpt-oss-120b"                                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-26b-a4b-qat"                     = @{ maxInput = 94208; maxOutput = 8192 }
+    "google/gemma-4-31b-qat"                         = @{ maxInput = 94208; maxOutput = 8192 }
+    "qwen3.8-27b"                                    = @{ maxInput = 94208; maxOutput = 8192 }
+}
+
 function Build-ModelEntry($id, $url) {
     $displayName = if ($nameMap.ContainsKey($id)) { $nameMap[$id] } else { $id }
+    $limits = if ($contextMap.ContainsKey($id)) { $contextMap[$id] } else { @{ maxInput = 65536; maxOutput = 8192 } }
     return [ordered]@{
         id              = $id
         name            = $displayName
         url             = $url
         toolCalling     = $true
         vision          = $true
-        maxInputTokens  = 94208
-        maxOutputTokens = 8192
+        maxInputTokens  = $limits.maxInput
+        maxOutputTokens = $limits.maxOutput
     }
 }
 
-# 2. Parse LMS authoritative device list
+# 3. Parse LMS authoritative device list
 Write-Host "Fetching authoritative device list from 'lms ls'..." -ForegroundColor Cyan
 $lmsLines = lms ls
 $localIds = @()
@@ -256,13 +286,13 @@ $localIds = $localIds | Sort-Object -Unique
 $amdHaloIds = $amdHaloIds | Sort-Object -Unique
 $geforceIds = $geforceIds | Sort-Object -Unique
 
-# 3. Fetch cluster models via loopback for LM-Link and Remote
+# 4. Fetch cluster models via loopback for LM-Link and Remote
 Write-Host "Fetching cluster models from http://127.0.0.1:1234/v1/models..." -ForegroundColor Cyan
 $apiModels = (Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id
 $lmLinkIds = ($apiModels + $nameMap.Keys | Sort-Object -Unique)
 $remoteIds = ($amdHaloIds + $geforceIds | Sort-Object -Unique)
 
-# 4. Construct category objects
+# 5. Construct category objects
 $categories = @(
     [ordered]@{
         name     = "Local"
@@ -298,7 +328,7 @@ $categories = @(
 
 $jsonContent = $categories | ConvertTo-Json -Depth 5
 
-# 5. Resolve target paths (active profile + base User configuration)
+# 6. Resolve target paths (active profile + base User configuration)
 $targets = @()
 $baseConfig = "$env:APPDATA\Code\User\chatLanguageModels.json"
 $targets += $baseConfig
@@ -312,7 +342,7 @@ if ($activeProfileDir) {
 
 $targets = $targets | Select-Object -Unique
 
-# 6. Validate & Write
+# 7. Validate & Write
 foreach ($target in $targets) {
     if (Test-Path $target) {
         Copy-Item -Path $target -Destination "$target.bak" -Force
@@ -325,7 +355,7 @@ foreach ($target in $targets) {
     $null = Get-Content $target -Raw | ConvertFrom-Json
 }
 
-# 7. Verify no localhost or 169.254. occurrences
+# 8. Verify no localhost or 169.254. occurrences
 $invalidMatches = Select-String -Path $targets -Pattern 'localhost|169\.254\.'
 if ($invalidMatches.Count -gt 0) {
     Write-Warning "Found invalid URLs in output!"
