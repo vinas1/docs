@@ -62,9 +62,9 @@ The configuration supports five categories:
 |----------|-------------|-------------|
 | **Local** | `http://127.0.0.1:1234/v1` | Models hosted on the current machine (loopback) |
 | **amd-halo** | `http://amd-halo:1234/v1` | Models hosted on AMD Halo device (hostname) |
-| **geforce** | `http://geforce:1234/v1` | Models hosted on NVIDIA GeForce GPU (hostname) |
+| **ripper** | `http://ripper:1234/v1` | Models hosted on NVIDIA GeForce GPUs (hostname) |
 | **LM-Link** | `http://127.0.0.1:1234/v1` | All cluster models served via loopback endpoint |
-| **Remote** | `http://127.0.0.1:1234/v1` | Remote models (amd-halo/geforce) routed via loopback |
+| **Remote** | `http://127.0.0.1:1234/v1` | Remote models (amd-halo/ripper) routed via loopback |
 
 ---
 
@@ -76,7 +76,7 @@ When running on different machines:
   ```bash
   lms link status
   ```
-  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `GeForce`).
+  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `ripper`).
 - If executing directly on `amd-halo`, `Local` becomes `amd-halo`, and workstation devices become remote.
 
 ---
@@ -84,7 +84,7 @@ When running on different machines:
 ## 4. URL Conventions
 
 - Use `127.0.0.1` for the local machine loopback address (**not** `localhost`).
-- Use hostnames (`amd-halo`, `geforce`) where DNS/mDNS resolution is available on your local network.
+- Use hostnames (`amd-halo`, `ripper`) where DNS/mDNS resolution is available on your local network.
 - **No remote IPs**: All endpoints resolve locally via hostname or loopback — avoid hardcoded external or link-local IPs (`169.254.x.x`).
 
 ---
@@ -106,21 +106,21 @@ lms ls --json
 
 ### Step 2: Handle Multi-Device Models & Variants
 
-- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `GeForce`, and `amd-halo`).
+- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `ripper`, and `amd-halo`).
 - Standard text output of `lms ls` may contain variant annotations (e.g., `google/gemma-4-12b-qat (1 variant)`).
 - **Regex pattern for text parsing:**
   ```regex
   ^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+
   ```
-  And capture the device column matching `\s+(Local|amd-halo|GeForce)\b`.
+  And capture the device column matching `\s+(Local|amd-halo|ripper)\b`.
 
 ### Step 3: Categorize Models
 
 - **`Local`**: Models where `DEVICE == Local`. URL: `http://127.0.0.1:1234/v1`.
 - **`amd-halo`**: Models where `DEVICE == amd-halo`. URL: `http://amd-halo:1234/v1`.
-- **`geforce`**: Models where `DEVICE == GeForce`. URL: `http://geforce:1234/v1`.
+- **`ripper`**: Models where `DEVICE == ripper`. URL: `http://ripper:1234/v1`.
 - **`LM-Link`**: All distinct cluster models returned by `http://127.0.0.1:1234/v1/models`. URL: `http://127.0.0.1:1234/v1`.
-- **`Remote`**: Models whose hosting device is remote (`amd-halo` or `GeForce`), routed via `http://127.0.0.1:1234/v1`.
+- **`Remote`**: Models whose hosting device is remote (`amd-halo` or `ripper`), routed via `http://127.0.0.1:1234/v1`.
 
 ---
 
@@ -268,29 +268,29 @@ Write-Host "Fetching authoritative device list from 'lms ls'..." -ForegroundColo
 $lmsLines = lms ls
 $localIds = @()
 $amdHaloIds = @()
-$geforceIds = @()
+$ripperIds = @()
 
 foreach ($line in $lmsLines) {
     if ($line -match '^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+') {
         $id = $matches[1]
-        if ($line -match '\s+(Local|amd-halo|GeForce)\b') {
+        if ($line -match '\s+(Local|amd-halo|ripper)\b') {
             $device = $matches[1]
             if ($device -eq 'Local') { $localIds += $id }
             elseif ($device -eq 'amd-halo') { $amdHaloIds += $id }
-            elseif ($device -eq 'GeForce') { $geforceIds += $id }
+            elseif ($device -eq 'ripper') { $ripperIds += $id }
         }
     }
 }
 
 $localIds = $localIds | Sort-Object -Unique
 $amdHaloIds = $amdHaloIds | Sort-Object -Unique
-$geforceIds = $geforceIds | Sort-Object -Unique
+$ripperIds = $ripperIds | Sort-Object -Unique
 
 # 4. Fetch cluster models via loopback for LM-Link and Remote
 Write-Host "Fetching cluster models from http://127.0.0.1:1234/v1/models..." -ForegroundColor Cyan
 $apiModels = (Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id
 $lmLinkIds = ($apiModels + $nameMap.Keys | Sort-Object -Unique)
-$remoteIds = ($amdHaloIds + $geforceIds | Sort-Object -Unique)
+$remoteIds = ($amdHaloIds + $ripperIds | Sort-Object -Unique)
 
 # 5. Construct category objects
 $categories = @(
@@ -307,10 +307,10 @@ $categories = @(
         models   = @($amdHaloIds | ForEach-Object { Build-ModelEntry $_ "http://amd-halo:1234/v1" })
     },
     [ordered]@{
-        name     = "geforce"
+        name     = "ripper"
         vendor   = "customendpoint"
         apiType  = "chat-completions"
-        models   = @($geforceIds | ForEach-Object { Build-ModelEntry $_ "http://geforce:1234/v1" })
+        models   = @($ripperIds | ForEach-Object { Build-ModelEntry $_ "http://ripper:1234/v1" })
     },
     [ordered]@{
         name     = "LM-Link"
