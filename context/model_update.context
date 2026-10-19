@@ -56,15 +56,16 @@ echo "Target configuration path: $TARGET_PATH"
 
 ## 2. Categories and Endpoints
 
-The configuration supports five categories:
+The configuration supports three primary categories, plus the loopback access pattern used by LM Studio:
 
 | Category | Endpoint URL | Description |
 |----------|-------------|-------------|
 | **Local** | `http://127.0.0.1:1234/v1` | Models hosted on the current machine (loopback) |
-| **amd-halo** | `http://amd-halo:1234/v1` | Models hosted on AMD Halo device (hostname) |
-| **ripper** | `http://ripper:1234/v1` | Models hosted on NVIDIA GeForce GPUs (hostname) |
-| **LM-Link** | `http://127.0.0.1:1234/v1` | All cluster models served via loopback endpoint |
-| **Remote** | `http://127.0.0.1:1234/v1` | Remote models (amd-halo/ripper) routed via loopback |
+| **LM-Link** | `http://127.0.0.1:1234/v1` | All distinct models visible through the local LM Studio endpoint |
+| **Remote** | `http://127.0.0.1:1234/v1` | Peer-device models routed through the local endpoint |
+
+> [!NOTE]
+> Device names are not fixed across machines. They may be `amd-halo`, `ripper`, `GeForce`, `RyDyn`, or any peer name reported by `lms link status`. Use the runtime output, not a hard-coded list.
 
 ---
 
@@ -76,8 +77,9 @@ When running on different machines:
   ```bash
   lms link status
   ```
-  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `ripper`).
-- If executing directly on `amd-halo`, `Local` becomes `amd-halo`, and workstation devices become remote.
+  The output lists `This device: <name>` (Local) and the connected peer devices that LM Studio has discovered.
+- Peer names are dynamic. They are not guaranteed to be `amd-halo`, `ripper`, or any other static string.
+- If you execute this on a peer device, that device becomes `Local` and the workstation or other linked node becomes remote.
 
 ---
 
@@ -91,36 +93,29 @@ When running on different machines:
 
 ## 5. Model Discovery & Parsing
 
-### Step 1: Run `lms ls`
+### Step 1: Run `lms ls --json`
 
-Run the LM Studio CLI to get the authoritative list of models and their hosting devices:
+Use the structured LM Studio output as the source of truth; it exposes `modelKey`, `deviceIdentifier`, and variant metadata without depending on terminal formatting.
 
-```bash
-lms ls
-```
-
-Or for structured JSON:
 ```bash
 lms ls --json
 ```
 
-### Step 2: Handle Multi-Device Models & Variants
+### Step 2: Use the structured fields instead of text parsing
 
-- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `ripper`, and `amd-halo`).
-- Standard text output of `lms ls` may contain variant annotations (e.g., `google/gemma-4-12b-qat (1 variant)`).
-- **Regex pattern for text parsing:**
-  ```regex
-  ^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+
-  ```
-  And capture the device column matching `\s+(Local|amd-halo|ripper)\b`.
+- Each item in the JSON includes a `modelKey` and a `deviceIdentifier`.
+- `deviceIdentifier` is `null` for models served by the current machine and a non-null value for peer devices.
+- Model variants are represented by the `variants` / `selectedVariant` arrays, so there is no need to parse text like `google/gemma-4-12b-qat (1 variant)`.
+- If a model appears on multiple devices, keep a single unique model ID in the final list and classify it by host context.
 
 ### Step 3: Categorize Models
 
-- **`Local`**: Models where `DEVICE == Local`. URL: `http://127.0.0.1:1234/v1`.
-- **`amd-halo`**: Models where `DEVICE == amd-halo`. URL: `http://amd-halo:1234/v1`.
-- **`ripper`**: Models where `DEVICE == ripper`. URL: `http://ripper:1234/v1`.
-- **`LM-Link`**: All distinct cluster models returned by `http://127.0.0.1:1234/v1/models`. URL: `http://127.0.0.1:1234/v1`.
-- **`Remote`**: Models whose hosting device is remote (`amd-halo` or `ripper`), routed via `http://127.0.0.1:1234/v1`.
+- **`Local`**: Models where `deviceIdentifier == null` (or where the device matches the current machine). URL: `http://127.0.0.1:1234/v1`.
+- **`Remote`**: Models where `deviceIdentifier != null` and the endpoint is being routed through the local LM Studio loopback. URL: `http://127.0.0.1:1234/v1`.
+- **`LM-Link`**: The union of all model IDs visible to the local endpoint. URL: `http://127.0.0.1:1234/v1`.
+
+> [!IMPORTANT]
+> Do not hard-code peer device names such as `amd-halo` or `ripper` in scripts. The names are runtime-discovered and can vary by machine and cluster topology.
 
 ---
 
@@ -189,7 +184,7 @@ For each category, define an object with a `models` array in `chatLanguageModels
 
 ## 8. Complete Automated PowerShell Script
 
-Save and run this script on Windows to automatically query endpoints, resolve profiles, validate, back up, and update `chatLanguageModels.json`:
+Save and run this script on Windows to automatically query LM Studio, resolve current and remote model IDs, validate, back up, and update `chatLanguageModels.json` without depending on static hostnames:
 
 ```powershell
 # update-chat-models.ps1
@@ -197,56 +192,40 @@ $ErrorActionPreference = "Stop"
 
 # 1. Human-readable name mapping
 $nameMap = @{
-    "gemma-4-12b-heretic-abliterated"               = "Gemma 4 12B Heretic Abliterated"
-    "google/gemma-4-12b-qat"                         = "Gemma 4 12B QAT"
-    "google/gemma-4-26b-a4b-qat"                     = "Gemma 4 26B A4B QAT"
-    "google/gemma-4-31b-qat"                         = "Gemma 4 31B QAT"
-    "glm-4.7-flash"                                  = "GLM 4.7 Flash"
-    "gpt-oss-120b"                                   = "Lemonade GPT OSS 120B (Q4_K_M)"
-    "meta/muse-glimmer"                              = "Meta Muse Glimmer 28B"
-    "nvidia/nemotron-3-nano-4b"                      = "Nemotron 3 Nano 4B"
-    "nvidia/nemotron-3-nano-omni"                    = "Nemotron 3 Nano Omni 30B-A3B"
-    "nvidia/nemotron-3-super"                        = "Nemotron 3 Super 120B"
-    "nvidia/nemotron-3.5-super-vl"                   = "Nemotron 3.5 Super VL 120B"
-    "qwen/qwen3-4b-2507"                             = "Qwen 3 4B 2507"
-    "qwen/qwen3-coder-next"                          = "Qwen 3 Coder Next"
-    "qwen/qwen3.5-9b"                                = "Qwen 3.5 9B"
-    "qwen3-1.7b"                                     = "Qwen 3 1.7B"
-    "qwen3-coder-30b-a3b-instruct"                   = "Unsloth Qwen 3 Coder 30B A3B Instruct"
-    "qwen3.5-122b-a10b"                              = "Qwen 3.5 122B A10B (Unsloth Q4_K_M)"
-    "qwen3.6-35b-a3b"                                = "Qwen 3.6 35B A3B (Unsloth Q8_0)"
-    "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = "Qwen 3.6 35B A3B Uncensored Hauhaucs Aggressive"
-    "qwen3.8-27b"                                    = "Unsloth Qwen 3.8 27B"
-    "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = "Qwen 3.8 27B Uncensored Hauhaucs Aggressive MTP"
-    "unsloth/qwen3-coder-next"                       = "Qwen 3 Coder Next 80B-A3B (Unsloth Q4_K_M)"
-    "text-embedding-nomic-embed-text-v1.5"           = "Text Embedding Nomic Embed Text v1.5"
+    "gemma-4-12b-heretic-abliterated" = "Gemma 4 12B Heretic Abliterated"
+    "google/gemma-4-12b-qat" = "Gemma 4 12B QAT"
+    "google/gemma-4-26b-a4b-qat" = "Gemma 4 26B A4B QAT"
+    "google/gemma-4-31b-qat" = "Gemma 4 31B QAT"
+    "google/gemma-4-26b-a4b" = "Gemma 4 26B A4B"
+    "google/gemma-4-31b" = "Gemma 4 31B"
+    "google/gemma-4-12b" = "Gemma 4 12B"
+    "google/gemma-4-e4b" = "Gemma 4 E4B"
+    "glm-4.7-flash" = "GLM 4.7 Flash"
+    "meta/muse-glimmer" = "Meta Muse Glimmer 28B"
+    "nvidia/nemotron-3-nano" = "Nemotron 3 Nano"
+    "nvidia/nemotron-3-nano-4b" = "Nemotron 3 Nano 4B"
+    "nvidia/nemotron-3-nano-omni" = "Nemotron 3 Nano Omni 30B-A3B"
+    "openai/gpt-oss-20b" = "OpenAI GPT OSS 20B"
+    "qwen/qwen2.5-coder-14b" = "Qwen2.5 Coder 14B"
+    "qwen/qwen3-4b-2507" = "Qwen 3 4B 2507"
+    "qwen/qwen3.5-9b" = "Qwen 3.5 9B"
+    "text-embedding-nomic-embed-text-v1.5" = "Text Embedding Nomic Embed Text v1.5"
 }
 
 # 2. Per-model context limits (reasonable limits erroring on higher side <= 100k)
 $contextMap = @{
-    "text-embedding-nomic-embed-text-v1.5"           = @{ maxInput = 2048;  maxOutput = 512 }
-    "qwen3-1.7b"                                     = @{ maxInput = 32768; maxOutput = 4096 }
-    "qwen/qwen3-4b-2507"                             = @{ maxInput = 49152; maxOutput = 8192 }
-    "nvidia/nemotron-3-nano-4b"                      = @{ maxInput = 49152; maxOutput = 8192 }
-    "glm-4.7-flash"                                  = @{ maxInput = 49152; maxOutput = 8192 }
-    "nvidia/nemotron-3-nano-omni"                    = @{ maxInput = 49152; maxOutput = 8192 }
-    "meta/muse-glimmer"                              = @{ maxInput = 49152; maxOutput = 8192 }
-    "qwen3-coder-30b-a3b-instruct"                   = @{ maxInput = 65536; maxOutput = 8192 }
-    "nvidia/nemotron-3-super"                        = @{ maxInput = 65536; maxOutput = 8192 }
-    "nvidia/nemotron-3.5-super-vl"                   = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen/qwen3.5-9b"                                = @{ maxInput = 65536; maxOutput = 8192 }
-    "google/gemma-4-12b-qat"                         = @{ maxInput = 65536; maxOutput = 8192 }
-    "gemma-4-12b-heretic-abliterated"               = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen3.6-35b-a3b"                                = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = @{ maxInput = 65536; maxOutput = 8192 }
-    "unsloth/qwen3-coder-next"                       = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen/qwen3-coder-next"                          = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen3.5-122b-a10b"                              = @{ maxInput = 65536; maxOutput = 8192 }
-    "gpt-oss-120b"                                   = @{ maxInput = 65536; maxOutput = 8192 }
-    "google/gemma-4-26b-a4b-qat"                     = @{ maxInput = 94208; maxOutput = 8192 }
-    "google/gemma-4-31b-qat"                         = @{ maxInput = 94208; maxOutput = 8192 }
-    "qwen3.8-27b"                                    = @{ maxInput = 94208; maxOutput = 8192 }
+    "text-embedding-nomic-embed-text-v1.5" = @{ maxInput = 2048; maxOutput = 512 }
+    "qwen/qwen2.5-coder-14b" = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3-4b-2507" = @{ maxInput = 49152; maxOutput = 8192 }
+    "nvidia/nemotron-3-nano-4b" = @{ maxInput = 49152; maxOutput = 8192 }
+    "nvidia/nemotron-3-nano-omni" = @{ maxInput = 49152; maxOutput = 8192 }
+    "meta/muse-glimmer" = @{ maxInput = 49152; maxOutput = 8192 }
+    "qwen/qwen3.5-9b" = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-12b-qat" = @{ maxInput = 65536; maxOutput = 8192 }
+    "gemma-4-12b-heretic-abliterated" = @{ maxInput = 65536; maxOutput = 8192 }
+    "openai/gpt-oss-20b" = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-26b-a4b-qat" = @{ maxInput = 94208; maxOutput = 8192 }
+    "google/gemma-4-31b-qat" = @{ maxInput = 94208; maxOutput = 8192 }
 }
 
 function Build-ModelEntry($id, $url) {
@@ -263,66 +242,54 @@ function Build-ModelEntry($id, $url) {
     }
 }
 
-# 3. Parse LMS authoritative device list
-Write-Host "Fetching authoritative device list from 'lms ls'..." -ForegroundColor Cyan
-$lmsLines = lms ls
-$localIds = @()
-$amdHaloIds = @()
-$ripperIds = @()
+# 3. Use the authoritative LM Studio JSON output instead of fixed hostnames
+Write-Host "Fetching authoritative model list from 'lms ls --json'..." -ForegroundColor Cyan
+$lmsModels = @((lms ls --json) | ConvertFrom-Json)
 
-foreach ($line in $lmsLines) {
-    if ($line -match '^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+') {
-        $id = $matches[1]
-        if ($line -match '\s+(Local|amd-halo|ripper)\b') {
-            $device = $matches[1]
-            if ($device -eq 'Local') { $localIds += $id }
-            elseif ($device -eq 'amd-halo') { $amdHaloIds += $id }
-            elseif ($device -eq 'ripper') { $ripperIds += $id }
-        }
+$localIds = @()
+$remoteIds = @()
+foreach ($model in $lmsModels) {
+    $id = $model.modelKey
+    if ($null -eq $model.deviceIdentifier) {
+        $localIds += $id
+    }
+    else {
+        $remoteIds += $id
     }
 }
 
 $localIds = $localIds | Sort-Object -Unique
-$amdHaloIds = $amdHaloIds | Sort-Object -Unique
-$ripperIds = $ripperIds | Sort-Object -Unique
+$remoteIds = $remoteIds | Sort-Object -Unique
 
-# 4. Fetch cluster models via loopback for LM-Link and Remote
-Write-Host "Fetching cluster models from http://127.0.0.1:1234/v1/models..." -ForegroundColor Cyan
-$apiModels = (Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id
-$lmLinkIds = ($apiModels + $nameMap.Keys | Sort-Object -Unique)
-$remoteIds = ($amdHaloIds + $ripperIds | Sort-Object -Unique)
+# 4. LM-Link includes every model currently visible through the local loopback
+$apiModels = @()
+try {
+    $apiModels = @((Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id)
+}
+catch {
+    $apiModels = @()
+}
+$lmLinkIds = @($apiModels + $localIds + $remoteIds | Sort-Object -Unique)
 
 # 5. Construct category objects
 $categories = @(
     [ordered]@{
-        name     = "Local"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($localIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+        name    = "Local"
+        vendor  = "customendpoint"
+        apiType = "chat-completions"
+        models  = @($localIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
     },
     [ordered]@{
-        name     = "amd-halo"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($amdHaloIds | ForEach-Object { Build-ModelEntry $_ "http://amd-halo:1234/v1" })
+        name    = "LM-Link"
+        vendor  = "customendpoint"
+        apiType = "chat-completions"
+        models  = @($lmLinkIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
     },
     [ordered]@{
-        name     = "ripper"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($ripperIds | ForEach-Object { Build-ModelEntry $_ "http://ripper:1234/v1" })
-    },
-    [ordered]@{
-        name     = "LM-Link"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($lmLinkIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
-    },
-    [ordered]@{
-        name     = "Remote"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($remoteIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+        name    = "Remote"
+        vendor  = "customendpoint"
+        apiType = "chat-completions"
+        models  = @($remoteIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
     }
 )
 
@@ -351,11 +318,10 @@ foreach ($target in $targets) {
     [System.IO.File]::WriteAllText($target, $jsonContent, [System.Text.Encoding]::UTF8)
     Write-Host "Successfully updated: $target" -ForegroundColor Green
 
-    # Validate syntax
     $null = Get-Content $target -Raw | ConvertFrom-Json
 }
 
-# 8. Verify no localhost or 169.254. occurrences
+# 8. Verify no invalid URLs were generated
 $invalidMatches = Select-String -Path $targets -Pattern 'localhost|169\.254\.'
 if ($invalidMatches.Count -gt 0) {
     Write-Warning "Found invalid URLs in output!"
