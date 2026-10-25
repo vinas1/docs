@@ -28,7 +28,7 @@ To automatically detect the active (most recently modified) profile directory:
 # Detect most recently active profile, or fallback to default
 $profilesBase = "$env:APPDATA\Code\User\profiles"
 $activeProfileDir = Get-ChildItem "$profilesBase\*\globalStorage" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty Directory
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { $_.Parent }
 
 if ($activeProfileDir) {
     $targetPath = Join-Path $activeProfileDir.FullName "chatLanguageModels.json"
@@ -56,15 +56,16 @@ echo "Target configuration path: $TARGET_PATH"
 
 ## 2. Categories and Endpoints
 
-The configuration supports five categories:
+The configuration supports cluster categories based on available nodes:
 
 | Category | Endpoint URL | Description |
 |----------|-------------|-------------|
 | **Local** | `http://127.0.0.1:1234/v1` | Models hosted on the current machine (loopback) |
 | **amd-halo** | `http://amd-halo:1234/v1` | Models hosted on AMD Halo device (hostname) |
+| **ripper** | `http://ripper:1234/v1` | Models hosted on ripper device (hostname) |
 | **geforce** | `http://geforce:1234/v1` | Models hosted on NVIDIA GeForce GPU (hostname) |
 | **LM-Link** | `http://127.0.0.1:1234/v1` | All cluster models served via loopback endpoint |
-| **Remote** | `http://127.0.0.1:1234/v1` | Remote models (amd-halo/geforce) routed via loopback |
+| **Remote** | `http://127.0.0.1:1234/v1` | Remote cluster models routed via loopback |
 
 ---
 
@@ -76,7 +77,7 @@ When running on different machines:
   ```bash
   lms link status
   ```
-  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `GeForce`).
+  The output lists `This device: <name>` (Local) and connected peer devices (e.g. `amd-halo`, `ripper`, `GeForce`, `DTE-macOS-*`).
 - If executing directly on `amd-halo`, `Local` becomes `amd-halo`, and workstation devices become remote.
 
 ---
@@ -84,43 +85,51 @@ When running on different machines:
 ## 4. URL Conventions
 
 - Use `127.0.0.1` for the local machine loopback address (**not** `localhost`).
-- Use hostnames (`amd-halo`, `geforce`) where DNS/mDNS resolution is available on your local network.
+- Use hostnames (`amd-halo`, `ripper`, `geforce`) where DNS/mDNS resolution is available on your local network.
+- Peer nodes without a direct LAN hostname (e.g. `DTE-macOS-*` over LM-Link) are accessed through the `LM-Link` and `Remote` categories via loopback (`http://127.0.0.1:1234/v1`).
 - **No remote IPs**: All endpoints resolve locally via hostname or loopback — avoid hardcoded external or link-local IPs (`169.254.x.x`).
 
 ---
 
 ## 5. Model Discovery & Parsing
 
-### Step 1: Run `lms ls`
+### Step 1: Wake LM-Link & Run `lms ls`
 
-Run the LM Studio CLI to get the authoritative list of models and their hosting devices:
+> [!WARNING]
+> **Cold-Start Wakeup Behavior:** If the LM Studio service was asleep (`Waking up LM Studio service...`), the very first `lms ls` call may only return `Local` models while LM-Link peers are still establishing connections. Always run `lms link status` first (and wait 2–3 seconds if waking up) before running `lms ls`.
 
 ```bash
+# 1. Wake service and verify connected LM-Link peers
+lms link status
+
+# 2. List all models with hosting device column
 lms ls
-```
 
-Or for structured JSON:
-```bash
+# 3. Fetch structured model metadata (displayName, maxContextLength, type)
 lms ls --json
 ```
 
-### Step 2: Handle Multi-Device Models & Variants
+### Step 2: Handle Multi-Device Models & Plural Variants
 
-- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `GeForce`, and `amd-halo`).
-- Standard text output of `lms ls` may contain variant annotations (e.g., `google/gemma-4-12b-qat (1 variant)`).
+- Models may appear under multiple devices simultaneously (e.g. `google/gemma-4-12b-qat` on `Local`, `amd-halo`, `ripper`, and `DTE-macOS-*`).
+- Standard text output of `lms ls` may contain singular or plural variant annotations (e.g., `(1 variant)` or `(2 variants)`).
 - **Regex pattern for text parsing:**
   ```regex
-  ^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+
+  ^\s*([^\s(]+)(?:\s+\(\d+\s+variant\w*\))?\s+
   ```
-  And capture the device column matching `\s+(Local|amd-halo|GeForce)\b`.
+  And capture the device column matching:
+  ```regex
+  \s+(Local|amd-halo|ripper|GeForce|DTE-macOS-\S+)\b
+  ```
 
 ### Step 3: Categorize Models
 
 - **`Local`**: Models where `DEVICE == Local`. URL: `http://127.0.0.1:1234/v1`.
 - **`amd-halo`**: Models where `DEVICE == amd-halo`. URL: `http://amd-halo:1234/v1`.
-- **`geforce`**: Models where `DEVICE == GeForce`. URL: `http://geforce:1234/v1`.
+- **`ripper`**: Models where `DEVICE == ripper`. URL: `http://ripper:1234/v1`.
+- **`geforce`**: Models where `DEVICE == GeForce`. URL: `http://geforce:1234/v1` (keep category even if empty when node is offline).
 - **`LM-Link`**: All distinct cluster models returned by `http://127.0.0.1:1234/v1/models`. URL: `http://127.0.0.1:1234/v1`.
-- **`Remote`**: Models whose hosting device is remote (`amd-halo` or `GeForce`), routed via `http://127.0.0.1:1234/v1`.
+- **`Remote`**: All models hosted on any remote peer (`amd-halo`, `ripper`, `GeForce`, `DTE-macOS-*`), routed via `http://127.0.0.1:1234/v1`.
 
 ---
 
@@ -154,11 +163,20 @@ For each category, define an object with a `models` array in `chatLanguageModels
 
 | Tier | `maxInputTokens` | `maxOutputTokens` | Target Models | Rationale |
 |:---|:---:|:---:|:---|:---|
-| **94k** | `94208` | `8192` | `google/gemma-4-26b-a4b-qat`<br>`google/gemma-4-31b-qat`<br>`qwen3.8-27b` | Dedicated long-context prose, RFC/architecture documentation, and Mermaid diagramming specialists (optimal 64k–94k). |
-| **65k** | `65536` | `8192` | `unsloth/qwen3-coder-next`<br>`qwen/qwen3-coder-next`<br>`qwen3.6-35b-a3b`<br>`qwen3.5-122b-a10b`<br>`gpt-oss-120b`<br>`google/gemma-4-12b-qat`<br>`gemma-4-12b-heretic-abliterated`<br>`qwen/qwen3.5-9b`<br>`nvidia/nemotron-3-super`<br>`nvidia/nemotron-3.5-super-vl`<br>`qwen3-coder-30b-a3b-instruct`<br>`qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive`<br>`qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp` | Primary backend coding agents, deep reasoning MoEs, and mid-size general models. Errs on the high side of their 32k–64k optimal range while avoiding memory bandwidth bottlenecks. |
-| **49k** | `49152` | `8192` | `glm-4.7-flash`<br>`qwen/qwen3-4b-2507`<br>`nvidia/nemotron-3-nano-4b`<br>`nvidia/nemotron-3-nano-omni`<br>`meta/muse-glimmer` | Lightweight 4B models, high-speed UI/frontend specialists, and watchdog/helper models. |
+| **94k** | `94208` | `8192` | `google/gemma-4-26b-a4b`<br>`google/gemma-4-26b-a4b-qat`<br>`google/gemma-4-31b`<br>`google/gemma-4-31b-qat`<br>`qwen/qwen3.8-27b`<br>`qwen3.8-27b` | Dedicated long-context prose, RFC/architecture documentation, and Mermaid diagramming specialists (optimal 64k–94k). |
+| **65k** | `65536` | `8192` | `deepseek/deepseek-r1-0528-qwen3-8b`<br>`gemma-4-12b-heretic-abliterated`<br>`google/gemma-4-12b`<br>`google/gemma-4-12b-qat`<br>`gpt-oss-120b`<br>`nousresearch/hermes-4-70b`<br>`nvidia/nemotron-3-nano`<br>`nvidia/nemotron-3-super`<br>`nvidia/nemotron-3.5-super-vl`<br>`openai/gpt-oss-20b`<br>`qwen/qwen3-coder-30b`<br>`qwen/qwen3-coder-next`<br>`qwen/qwen3.5-9b`<br>`qwen/qwen3.6-35b-a3b`<br>`qwen3-coder-30b-a3b-instruct`<br>`qwen3.5-122b-a10b`<br>`qwen3.6-35b-a3b`<br>`qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive`<br>`qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp`<br>`recursivesi/flint`<br>`unsloth/qwen3-coder-next` | Primary backend coding agents, deep reasoning MoEs, and mid-to-large general models. Errs on the high side of their 32k–64k optimal range while avoiding memory bandwidth bottlenecks. |
+| **49k** | `49152` | `8192` | `glm-4.7-flash`<br>`google/gemma-4-e4b`<br>`ibm/granite-4-h-tiny`<br>`meta/muse-glimmer`<br>`nvidia/nemotron-3-nano-4b`<br>`nvidia/nemotron-3-nano-omni`<br>`qwen/qwen3-4b-2507` | Lightweight 4B–7B models, high-speed UI/frontend specialists, and watchdog/helper models. |
 | **32k** | `32768` | `4096` | `qwen3-1.7b` | Tiny 1.7B edge/draft model (native max context is 40,960). |
 | **2k** | `2048` | `512` | `text-embedding-nomic-embed-text-v1.5` | Local vector embedding model (native max context is 2,048). |
+
+### Dynamic Fallback for New Models
+
+When a newly downloaded model is not yet listed in the static lookup map, scripts automatically fall back to `lms ls --json` metadata:
+- **`name`**: Uses `displayName` from `lms ls --json` (or `id` if unavailable).
+- **Context limits**:
+  - If `type == "embedding"` or `maxContextLength <= 4096`: `maxInputTokens = 2048`, `maxOutputTokens = 512`.
+  - If `maxContextLength <= 40960`: `maxInputTokens = 32768`, `maxOutputTokens = 4096`.
+  - Otherwise: `maxInputTokens = 65536`, `maxOutputTokens = 8192`.
 
 ---
 
@@ -197,20 +215,32 @@ $ErrorActionPreference = "Stop"
 
 # 1. Human-readable name mapping
 $nameMap = @{
+    "deepseek/deepseek-r1-0528-qwen3-8b"             = "DeepSeek R1 0528 Qwen3 8B"
     "gemma-4-12b-heretic-abliterated"               = "Gemma 4 12B Heretic Abliterated"
-    "google/gemma-4-12b-qat"                         = "Gemma 4 12B QAT"
-    "google/gemma-4-26b-a4b-qat"                     = "Gemma 4 26B A4B QAT"
-    "google/gemma-4-31b-qat"                         = "Gemma 4 31B QAT"
     "glm-4.7-flash"                                  = "GLM 4.7 Flash"
+    "google/gemma-4-12b"                             = "Gemma 4 12B"
+    "google/gemma-4-12b-qat"                         = "Gemma 4 12B QAT"
+    "google/gemma-4-26b-a4b"                         = "Gemma 4 26B A4B"
+    "google/gemma-4-26b-a4b-qat"                     = "Gemma 4 26B A4B QAT"
+    "google/gemma-4-31b"                             = "Gemma 4 31B"
+    "google/gemma-4-31b-qat"                         = "Gemma 4 31B QAT"
+    "google/gemma-4-e4b"                             = "Gemma 4 E4B"
     "gpt-oss-120b"                                   = "Lemonade GPT OSS 120B (Q4_K_M)"
+    "ibm/granite-4-h-tiny"                           = "Granite 4 H Tiny"
     "meta/muse-glimmer"                              = "Meta Muse Glimmer 28B"
+    "nousresearch/hermes-4-70b"                      = "Hermes 4 70B"
+    "nvidia/nemotron-3-nano"                         = "Nemotron 3 Nano"
     "nvidia/nemotron-3-nano-4b"                      = "Nemotron 3 Nano 4B"
     "nvidia/nemotron-3-nano-omni"                    = "Nemotron 3 Nano Omni 30B-A3B"
     "nvidia/nemotron-3-super"                        = "Nemotron 3 Super 120B"
     "nvidia/nemotron-3.5-super-vl"                   = "Nemotron 3.5 Super VL 120B"
+    "openai/gpt-oss-20b"                             = "OpenAI GPT-OSS 20B"
     "qwen/qwen3-4b-2507"                             = "Qwen 3 4B 2507"
+    "qwen/qwen3-coder-30b"                           = "Qwen 3 Coder 30B"
     "qwen/qwen3-coder-next"                          = "Qwen 3 Coder Next"
     "qwen/qwen3.5-9b"                                = "Qwen 3.5 9B"
+    "qwen/qwen3.6-35b-a3b"                           = "Qwen 3.6 35B A3B"
+    "qwen/qwen3.8-27b"                               = "Qwen 3.8 27B"
     "qwen3-1.7b"                                     = "Qwen 3 1.7B"
     "qwen3-coder-30b-a3b-instruct"                   = "Unsloth Qwen 3 Coder 30B A3B Instruct"
     "qwen3.5-122b-a10b"                              = "Qwen 3.5 122B A10B (Unsloth Q4_K_M)"
@@ -218,40 +248,90 @@ $nameMap = @{
     "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = "Qwen 3.6 35B A3B Uncensored Hauhaucs Aggressive"
     "qwen3.8-27b"                                    = "Unsloth Qwen 3.8 27B"
     "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = "Qwen 3.8 27B Uncensored Hauhaucs Aggressive MTP"
-    "unsloth/qwen3-coder-next"                       = "Qwen 3 Coder Next 80B-A3B (Unsloth Q4_K_M)"
+    "recursivesi/flint"                              = "RecursiveSI Flint 40B"
     "text-embedding-nomic-embed-text-v1.5"           = "Text Embedding Nomic Embed Text v1.5"
+    "unsloth/qwen3-coder-next"                       = "Qwen 3 Coder Next 80B-A3B (Unsloth Q4_K_M)"
 }
 
 # 2. Per-model context limits (reasonable limits erroring on higher side <= 100k)
 $contextMap = @{
     "text-embedding-nomic-embed-text-v1.5"           = @{ maxInput = 2048;  maxOutput = 512 }
     "qwen3-1.7b"                                     = @{ maxInput = 32768; maxOutput = 4096 }
+    "google/gemma-4-e4b"                             = @{ maxInput = 49152; maxOutput = 8192 }
+    "ibm/granite-4-h-tiny"                           = @{ maxInput = 49152; maxOutput = 8192 }
     "qwen/qwen3-4b-2507"                             = @{ maxInput = 49152; maxOutput = 8192 }
     "nvidia/nemotron-3-nano-4b"                      = @{ maxInput = 49152; maxOutput = 8192 }
     "glm-4.7-flash"                                  = @{ maxInput = 49152; maxOutput = 8192 }
     "nvidia/nemotron-3-nano-omni"                    = @{ maxInput = 49152; maxOutput = 8192 }
     "meta/muse-glimmer"                              = @{ maxInput = 49152; maxOutput = 8192 }
-    "qwen3-coder-30b-a3b-instruct"                   = @{ maxInput = 65536; maxOutput = 8192 }
-    "nvidia/nemotron-3-super"                        = @{ maxInput = 65536; maxOutput = 8192 }
-    "nvidia/nemotron-3.5-super-vl"                   = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen/qwen3.5-9b"                                = @{ maxInput = 65536; maxOutput = 8192 }
+    "deepseek/deepseek-r1-0528-qwen3-8b"             = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-12b"                             = @{ maxInput = 65536; maxOutput = 8192 }
     "google/gemma-4-12b-qat"                         = @{ maxInput = 65536; maxOutput = 8192 }
     "gemma-4-12b-heretic-abliterated"               = @{ maxInput = 65536; maxOutput = 8192 }
+    "nousresearch/hermes-4-70b"                      = @{ maxInput = 65536; maxOutput = 8192 }
+    "nvidia/nemotron-3-nano"                         = @{ maxInput = 65536; maxOutput = 8192 }
+    "nvidia/nemotron-3-super"                        = @{ maxInput = 65536; maxOutput = 8192 }
+    "nvidia/nemotron-3.5-super-vl"                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "openai/gpt-oss-20b"                             = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3-coder-30b"                           = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3-coder-next"                          = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3.5-9b"                                = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen/qwen3.6-35b-a3b"                           = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3-coder-30b-a3b-instruct"                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "qwen3.5-122b-a10b"                              = @{ maxInput = 65536; maxOutput = 8192 }
     "qwen3.6-35b-a3b"                                = @{ maxInput = 65536; maxOutput = 8192 }
     "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive" = @{ maxInput = 65536; maxOutput = 8192 }
     "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp" = @{ maxInput = 65536; maxOutput = 8192 }
+    "recursivesi/flint"                              = @{ maxInput = 65536; maxOutput = 8192 }
     "unsloth/qwen3-coder-next"                       = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen/qwen3-coder-next"                          = @{ maxInput = 65536; maxOutput = 8192 }
-    "qwen3.5-122b-a10b"                              = @{ maxInput = 65536; maxOutput = 8192 }
     "gpt-oss-120b"                                   = @{ maxInput = 65536; maxOutput = 8192 }
+    "google/gemma-4-26b-a4b"                         = @{ maxInput = 94208; maxOutput = 8192 }
     "google/gemma-4-26b-a4b-qat"                     = @{ maxInput = 94208; maxOutput = 8192 }
+    "google/gemma-4-31b"                             = @{ maxInput = 94208; maxOutput = 8192 }
     "google/gemma-4-31b-qat"                         = @{ maxInput = 94208; maxOutput = 8192 }
+    "qwen/qwen3.8-27b"                               = @{ maxInput = 94208; maxOutput = 8192 }
     "qwen3.8-27b"                                    = @{ maxInput = 94208; maxOutput = 8192 }
 }
 
+# 3. Wake LM-Link service and load dynamic metadata from 'lms ls --json'
+Write-Host "Checking LM-Link status..." -ForegroundColor Cyan
+$linkOut = lms link status 2>&1 | Out-String
+if ($linkOut -match "Waking up") { Start-Sleep -Seconds 3 }
+
+$jsonMeta = @{}
+try {
+    $lmsJson = lms ls --json | ConvertFrom-Json
+    foreach ($m in $lmsJson) {
+        if (-not $jsonMeta.ContainsKey($m.modelKey)) {
+            $jsonMeta[$m.modelKey] = $m
+        }
+    }
+} catch {}
+
 function Build-ModelEntry($id, $url) {
-    $displayName = if ($nameMap.ContainsKey($id)) { $nameMap[$id] } else { $id }
-    $limits = if ($contextMap.ContainsKey($id)) { $contextMap[$id] } else { @{ maxInput = 65536; maxOutput = 8192 } }
+    $meta = $jsonMeta[$id]
+    $displayName = if ($nameMap.ContainsKey($id)) {
+        $nameMap[$id]
+    } elseif ($meta -and $meta.displayName) {
+        $meta.displayName
+    } else {
+        $id
+    }
+
+    $limits = if ($contextMap.ContainsKey($id)) {
+        $contextMap[$id]
+    } elseif ($meta) {
+        if ($meta.type -eq "embedding" -or $meta.maxContextLength -le 4096) {
+            @{ maxInput = 2048; maxOutput = 512 }
+        } elseif ($meta.maxContextLength -le 40960) {
+            @{ maxInput = 32768; maxOutput = 4096 }
+        } else {
+            @{ maxInput = 65536; maxOutput = 8192 }
+        }
+    } else {
+        @{ maxInput = 65536; maxOutput = 8192 }
+    }
+
     return [ordered]@{
         id              = $id
         name            = $displayName
@@ -263,36 +343,42 @@ function Build-ModelEntry($id, $url) {
     }
 }
 
-# 3. Parse LMS authoritative device list
+# 4. Parse LMS authoritative device list
 Write-Host "Fetching authoritative device list from 'lms ls'..." -ForegroundColor Cyan
 $lmsLines = lms ls
 $localIds = @()
 $amdHaloIds = @()
+$ripperIds = @()
 $geforceIds = @()
+$otherRemoteIds = @()
 
 foreach ($line in $lmsLines) {
-    if ($line -match '^\s*([^\s(]+)(?:\s+\(\d+\s+variant\))?\s+') {
+    if ($line -match '^\s*([^\s(]+)(?:\s+\(\d+\s+variant\w*\))?\s+') {
         $id = $matches[1]
-        if ($line -match '\s+(Local|amd-halo|GeForce)\b') {
+        if ($line -match '\s+(Local|amd-halo|ripper|GeForce|DTE-macOS-\S+)\b') {
             $device = $matches[1]
             if ($device -eq 'Local') { $localIds += $id }
             elseif ($device -eq 'amd-halo') { $amdHaloIds += $id }
+            elseif ($device -eq 'ripper') { $ripperIds += $id }
             elseif ($device -eq 'GeForce') { $geforceIds += $id }
+            else { $otherRemoteIds += $id }
         }
     }
 }
 
 $localIds = $localIds | Sort-Object -Unique
 $amdHaloIds = $amdHaloIds | Sort-Object -Unique
+$ripperIds = $ripperIds | Sort-Object -Unique
 $geforceIds = $geforceIds | Sort-Object -Unique
+$otherRemoteIds = $otherRemoteIds | Sort-Object -Unique
 
-# 4. Fetch cluster models via loopback for LM-Link and Remote
+# 5. Fetch cluster models via loopback for LM-Link and Remote
 Write-Host "Fetching cluster models from http://127.0.0.1:1234/v1/models..." -ForegroundColor Cyan
 $apiModels = (Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models").data | Select-Object -ExpandProperty id
-$lmLinkIds = ($apiModels + $nameMap.Keys | Sort-Object -Unique)
-$remoteIds = ($amdHaloIds + $geforceIds | Sort-Object -Unique)
+$lmLinkIds = ($apiModels | Sort-Object -Unique)
+$remoteIds = ($amdHaloIds + $ripperIds + $geforceIds + $otherRemoteIds | Sort-Object -Unique)
 
-# 5. Construct category objects
+# 6. Construct category objects
 $categories = @(
     [ordered]@{
         name     = "Local"
@@ -305,6 +391,12 @@ $categories = @(
         vendor   = "customendpoint"
         apiType  = "chat-completions"
         models   = @($amdHaloIds | ForEach-Object { Build-ModelEntry $_ "http://amd-halo:1234/v1" })
+    },
+    [ordered]@{
+        name     = "ripper"
+        vendor   = "customendpoint"
+        apiType  = "chat-completions"
+        models   = @($ripperIds | ForEach-Object { Build-ModelEntry $_ "http://ripper:1234/v1" })
     },
     [ordered]@{
         name     = "geforce"
@@ -328,21 +420,24 @@ $categories = @(
 
 $jsonContent = $categories | ConvertTo-Json -Depth 5
 
-# 6. Resolve target paths (active profile + base User configuration)
-$targets = @()
-$baseConfig = "$env:APPDATA\Code\User\chatLanguageModels.json"
-$targets += $baseConfig
+# 7. Resolve target paths (base User configuration + active/existing profiles)
+$targets = @("$env:APPDATA\Code\User\chatLanguageModels.json")
 
 $activeProfileDir = Get-ChildItem "$env:APPDATA\Code\User\profiles\*\globalStorage" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty Directory
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { $_.Parent }
 
 if ($activeProfileDir) {
     $targets += (Join-Path $activeProfileDir.FullName "chatLanguageModels.json")
 }
 
+Get-ChildItem "$env:APPDATA\Code\User\profiles" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    $p = Join-Path $_.FullName "chatLanguageModels.json"
+    if (Test-Path $p) { $targets += $p }
+}
+
 $targets = $targets | Select-Object -Unique
 
-# 7. Validate & Write
+# 8. Validate & Write
 foreach ($target in $targets) {
     if (Test-Path $target) {
         Copy-Item -Path $target -Destination "$target.bak" -Force
@@ -355,7 +450,7 @@ foreach ($target in $targets) {
     $null = Get-Content $target -Raw | ConvertFrom-Json
 }
 
-# 8. Verify no localhost or 169.254. occurrences
+# 9. Verify no localhost or 169.254. occurrences
 $invalidMatches = Select-String -Path $targets -Pattern 'localhost|169\.254\.'
 if ($invalidMatches.Count -gt 0) {
     Write-Warning "Found invalid URLs in output!"
@@ -365,4 +460,165 @@ if ($invalidMatches.Count -gt 0) {
 }
 
 Write-Host "To apply changes in VS Code, run: code --reload-window" -ForegroundColor Cyan
+```
+
+---
+
+## 9. Cross-Platform Python 3 Script (macOS / Linux / Windows)
+
+On macOS (`DTE-macOS-*`), Linux, or Windows with Python 3 installed, run:
+
+```python
+#!/usr/bin/env python3
+"""Automates VS Code chatLanguageModels.json updates across macOS, Linux, and Windows."""
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+NAME_MAP = {
+    "deepseek/deepseek-r1-0528-qwen3-8b": "DeepSeek R1 0528 Qwen3 8B",
+    "gemma-4-12b-heretic-abliterated": "Gemma 4 12B Heretic Abliterated",
+    "glm-4.7-flash": "GLM 4.7 Flash",
+    "google/gemma-4-12b": "Gemma 4 12B",
+    "google/gemma-4-12b-qat": "Gemma 4 12B QAT",
+    "google/gemma-4-26b-a4b": "Gemma 4 26B A4B",
+    "google/gemma-4-26b-a4b-qat": "Gemma 4 26B A4B QAT",
+    "google/gemma-4-31b": "Gemma 4 31B",
+    "google/gemma-4-31b-qat": "Gemma 4 31B QAT",
+    "google/gemma-4-e4b": "Gemma 4 E4B",
+    "gpt-oss-120b": "Lemonade GPT OSS 120B (Q4_K_M)",
+    "ibm/granite-4-h-tiny": "Granite 4 H Tiny",
+    "meta/muse-glimmer": "Meta Muse Glimmer 28B",
+    "nousresearch/hermes-4-70b": "Hermes 4 70B",
+    "nvidia/nemotron-3-nano": "Nemotron 3 Nano",
+    "nvidia/nemotron-3-nano-4b": "Nemotron 3 Nano 4B",
+    "nvidia/nemotron-3-nano-omni": "Nemotron 3 Nano Omni 30B-A3B",
+    "nvidia/nemotron-3-super": "Nemotron 3 Super 120B",
+    "nvidia/nemotron-3.5-super-vl": "Nemotron 3.5 Super VL 120B",
+    "openai/gpt-oss-20b": "OpenAI GPT-OSS 20B",
+    "qwen/qwen3-4b-2507": "Qwen 3 4B 2507",
+    "qwen/qwen3-coder-30b": "Qwen 3 Coder 30B",
+    "qwen/qwen3-coder-next": "Qwen 3 Coder Next",
+    "qwen/qwen3.5-9b": "Qwen 3.5 9B",
+    "qwen/qwen3.6-35b-a3b": "Qwen 3.6 35B A3B",
+    "qwen/qwen3.8-27b": "Qwen 3.8 27B",
+    "qwen3-1.7b": "Qwen 3 1.7B",
+    "qwen3-coder-30b-a3b-instruct": "Unsloth Qwen 3 Coder 30B A3B Instruct",
+    "qwen3.5-122b-a10b": "Qwen 3.5 122B A10B (Unsloth Q4_K_M)",
+    "qwen3.6-35b-a3b": "Qwen 3.6 35B A3B (Unsloth Q8_0)",
+    "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive": "Qwen 3.6 35B A3B Uncensored Hauhaucs Aggressive",
+    "qwen3.8-27b": "Unsloth Qwen 3.8 27B",
+    "qwen3.8-27b-uncensored-hauhaucs-aggressive-mtp": "Qwen 3.8 27B Uncensored Hauhaucs Aggressive MTP",
+    "recursivesi/flint": "RecursiveSI Flint 40B",
+    "text-embedding-nomic-embed-text-v1.5": "Text Embedding Nomic Embed Text v1.5",
+    "unsloth/qwen3-coder-next": "Qwen 3 Coder Next 80B-A3B (Unsloth Q4_K_M)",
+}
+
+CONTEXT_MAP = {
+    "text-embedding-nomic-embed-text-v1.5": (2048, 512),
+    "qwen3-1.7b": (32768, 4096),
+    "google/gemma-4-e4b": (49152, 8192),
+    "ibm/granite-4-h-tiny": (49152, 8192),
+    "qwen/qwen3-4b-2507": (49152, 8192),
+    "nvidia/nemotron-3-nano-4b": (49152, 8192),
+    "glm-4.7-flash": (49152, 8192),
+    "nvidia/nemotron-3-nano-omni": (49152, 8192),
+    "meta/muse-glimmer": (49152, 8192),
+    "google/gemma-4-26b-a4b": (94208, 8192),
+    "google/gemma-4-26b-a4b-qat": (94208, 8192),
+    "google/gemma-4-31b": (94208, 8192),
+    "google/gemma-4-31b-qat": (94208, 8192),
+    "qwen/qwen3.8-27b": (94208, 8192),
+    "qwen3.8-27b": (94208, 8192),
+}
+
+def main():
+    link = subprocess.run(["lms", "link", "status"], capture_output=True, text=True)
+    if "Waking up" in (link.stdout + link.stderr):
+        time.sleep(3)
+
+    json_meta = {}
+    res_json = subprocess.run(["lms", "ls", "--json"], capture_output=True, text=True)
+    if res_json.returncode == 0:
+        for item in json.loads(res_json.stdout):
+            json_meta.setdefault(item.get("modelKey"), item)
+
+    res_ls = subprocess.run(["lms", "ls"], capture_output=True, text=True, check=True)
+    buckets = {"Local": set(), "amd-halo": set(), "ripper": set(), "GeForce": set(), "OtherRemote": set()}
+    for line in res_ls.stdout.splitlines():
+        m_id = re.match(r"^\s*([^\s(]+)(?:\s+\(\d+\s+variant\w*\))?\s+", line)
+        m_dev = re.search(r"\s+(Local|amd-halo|ripper|GeForce|DTE-macOS-\S+)\b", line)
+        if m_id and m_dev:
+            mid, dev = m_id.group(1), m_dev.group(1)
+            buckets[dev if dev in buckets else "OtherRemote"].add(mid)
+
+    with urllib.request.urlopen("http://127.0.0.1:1234/v1/models", timeout=5) as resp:
+        api_models = sorted({m["id"] for m in json.loads(resp.read().decode())["data"]})
+
+    def build_entry(mid, url):
+        meta = json_meta.get(mid, {})
+        name = NAME_MAP.get(mid) or meta.get("displayName") or mid
+        if mid in CONTEXT_MAP:
+            max_in, max_out = CONTEXT_MAP[mid]
+        elif meta.get("type") == "embedding" or meta.get("maxContextLength", 65536) <= 4096:
+            max_in, max_out = 2048, 512
+        elif meta.get("maxContextLength", 65536) <= 40960:
+            max_in, max_out = 32768, 4096
+        else:
+            max_in, max_out = 65536, 8192
+        return {
+            "id": mid, "name": name, "url": url,
+            "toolCalling": True, "vision": True,
+            "maxInputTokens": max_in, "maxOutputTokens": max_out,
+        }
+
+    remote_ids = sorted(buckets["amd-halo"] | buckets["ripper"] | buckets["GeForce"] | buckets["OtherRemote"])
+    categories = [
+        {"name": "Local", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://127.0.0.1:1234/v1") for m in sorted(buckets["Local"])]},
+        {"name": "amd-halo", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://amd-halo:1234/v1") for m in sorted(buckets["amd-halo"])]},
+        {"name": "ripper", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://ripper:1234/v1") for m in sorted(buckets["ripper"])]},
+        {"name": "geforce", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://geforce:1234/v1") for m in sorted(buckets["GeForce"])]},
+        {"name": "LM-Link", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://127.0.0.1:1234/v1") for m in api_models]},
+        {"name": "Remote", "vendor": "customendpoint", "apiType": "chat-completions",
+         "models": [build_entry(m, "http://127.0.0.1:1234/v1") for m in remote_ids]},
+    ]
+
+    sys_name = platform.system()
+    if sys_name == "Windows":
+        code_user = Path(os.environ["APPDATA"]) / "Code" / "User"
+    elif sys_name == "Darwin":
+        code_user = Path.home() / "Library" / "Application Support" / "Code" / "User"
+    else:
+        code_user = Path.home() / ".config" / "Code" / "User"
+
+    targets = {code_user / "chatLanguageModels.json"}
+    profiles_dir = code_user / "profiles"
+    if profiles_dir.is_dir():
+        gs_dirs = sorted(profiles_dir.glob("*/globalStorage"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if gs_dirs:
+            targets.add(gs_dirs[0].parent / "chatLanguageModels.json")
+        for p in profiles_dir.glob("*/chatLanguageModels.json"):
+            targets.add(p)
+
+    payload = json.dumps(categories, indent=2)
+    for t in sorted(targets):
+        if t.exists():
+            shutil.copy2(t, f"{t}.bak")
+        t.write_text(payload, encoding="utf-8")
+        json.loads(t.read_text(encoding="utf-8"))
+        print(f"Updated: {t}")
+
+if __name__ == "__main__":
+    main()
 ```
