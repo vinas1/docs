@@ -207,7 +207,7 @@ When a newly downloaded model is not yet listed in the static lookup map, script
 
 ## 8. Complete Automated PowerShell Script
 
-Save and run this script on Windows to automatically query endpoints, resolve profiles, validate, back up, and update `chatLanguageModels.json`:
+Save and run this script on Windows to automatically query LM Studio, resolve current and remote model IDs, validate, back up, and update `chatLanguageModels.json` without depending on static hostnames:
 
 ```powershell
 # update-chat-models.ps1
@@ -381,16 +381,16 @@ $remoteIds = ($amdHaloIds + $ripperIds + $geforceIds + $otherRemoteIds | Sort-Ob
 # 6. Construct category objects
 $categories = @(
     [ordered]@{
-        name     = "Local"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($localIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
+        name    = "Local"
+        vendor  = "customendpoint"
+        apiType = "chat-completions"
+        models  = @($localIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
     },
     [ordered]@{
-        name     = "amd-halo"
-        vendor   = "customendpoint"
-        apiType  = "chat-completions"
-        models   = @($amdHaloIds | ForEach-Object { Build-ModelEntry $_ "http://amd-halo:1234/v1" })
+        name    = "LM-Link"
+        vendor  = "customendpoint"
+        apiType = "chat-completions"
+        models  = @($lmLinkIds | ForEach-Object { Build-ModelEntry $_ "http://127.0.0.1:1234/v1" })
     },
     [ordered]@{
         name     = "ripper"
@@ -446,7 +446,6 @@ foreach ($target in $targets) {
     [System.IO.File]::WriteAllText($target, $jsonContent, [System.Text.Encoding]::UTF8)
     Write-Host "Successfully updated: $target" -ForegroundColor Green
 
-    # Validate syntax
     $null = Get-Content $target -Raw | ConvertFrom-Json
 }
 
